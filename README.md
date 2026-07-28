@@ -1,6 +1,6 @@
 # NDF
 
-.NET libraries for interoperating with the Linux shell. Call Bash functions from
+.NET / Linux shell interoperability libraries. Call Bash functions from
 C# as if they were typed methods — arguments are marshalled in, and `stdout`,
 `stderr`, and exit codes are captured and converted back to .NET types.
 

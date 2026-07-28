@@ -6,6 +6,7 @@ obj/
 publish/
 [Pp]ublish/
 artifacts/
+dist/
 TestResults/
 
 # .NET / NuGet

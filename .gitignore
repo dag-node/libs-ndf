@@ -1,0 +1,41 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+[Pp]ublish/
+artifacts/
+TestResults/
+
+# .NET / NuGet
+/packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+# JetBrains Rider
+.idea/
+riderModule.iml
+/_ReSharper.Caches/
+*.sln.iml
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# Visual Studio Code
+.vscode/
+
+# Logs and diagnostics
+*.binlog
+msbuild.log
+
+# OS
+.DS_Store
+Thumbs.db

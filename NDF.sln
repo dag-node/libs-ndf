@@ -1,8 +1,8 @@
 
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NDF.Interoperability.Core", "src\NDF.Interoperability.Core\NDF.Interoperability.Core.csproj", "{E08483B3-9F1D-442A-B737-CFBB0BDF4EDC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DagNode.NDF.Interoperability.Core", "src\DagNode.NDF.Interoperability.Core\DagNode.NDF.Interoperability.Core.csproj", "{E08483B3-9F1D-442A-B737-CFBB0BDF4EDC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NDF.Interoperability.Bash.ConsoleApp", "src\NDF.Interoperability.Bash.ConsoleApp\NDF.Interoperability.Bash.ConsoleApp.csproj", "{87C725B3-F2F0-41C8-82B9-1081FFBD04F5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DagNode.NDF.Interoperability.Bash.ConsoleApp", "src\DagNode.NDF.Interoperability.Bash.ConsoleApp\DagNode.NDF.Interoperability.Bash.ConsoleApp.csproj", "{87C725B3-F2F0-41C8-82B9-1081FFBD04F5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

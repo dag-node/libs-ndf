@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <RootNamespace>DagNode.NDF.Interoperability</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Compile Remove="FileWatcher\SimpleFileWatcher.cs" />
+      <Compile Remove="FileWatcher\TailFileWatcher.cs" />
+      <Compile Remove="FileWatcher\TailFileWatcherManager.cs" />
+      <Compile Remove="FileWatcher\LogFileWatcherManager.cs" />
+      <Compile Remove="FileWatcher\LogFileSystemWatcher.cs" />
+      <Compile Remove="Utils\InMemoryFileSystem.cs" />
+      <Compile Remove="Extensions\ProcessExtensionsWithStreamsWip.cs" />
+      <Compile Remove="Model\Bash\FunctionResultLogLocation.cs" />
+      <Compile Remove="Model\Bash\FunctionResultOutLocation.cs" />
+      <Compile Remove="Model\Bash\FunctionResultErrLocation.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+    </ItemGroup>   
+
+</Project>

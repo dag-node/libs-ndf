@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <PublishAot>true</PublishAot>
+        <InvariantGlobalization>true</InvariantGlobalization>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\DagNode.NDF.Interoperability.Core\DagNode.NDF.Interoperability.Core.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Remove="functions.sh" />
+      <Content Include="functions.sh">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+      <None Remove="Scripts\___run_function__with__stdout_end_marker__async.sh" />
+      <Content Include="Scripts\___run_function__with__stdout_end_marker__async.sh">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+      <None Remove="Scripts\___init_traps.sh" />
+      <Content Include="Scripts\___init_traps.sh">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+    </ItemGroup>
+
+</Project>

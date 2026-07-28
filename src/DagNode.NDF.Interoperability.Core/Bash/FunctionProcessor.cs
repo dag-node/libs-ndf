@@ -215,7 +215,7 @@ public class FunctionProcessor : IDisposable
 
 		/// <summary>
 		/// The main bash process spawns subprocesses (system background tasks)
-		/// for every function call (fifo/pid &).
+		/// for every function call (fifo/pid &amp;).
 		/// UseCase: Running many asynchronous functions.
 		/// </summary>
 		SubprocessPerFunctionCall,
@@ -223,7 +223,7 @@ public class FunctionProcessor : IDisposable
 		/// <summary>
 		/// A pool with fixed number of bash processes (ideally up to max number of CPU cores).
 		/// Bash processes do not spawn subprocesses per function call (system background tasks),
-		/// but run functions synchronously (pool/fifo/pid, no &).
+		/// but run functions synchronously (pool/fifo/pid, no &amp;).
 		/// UseCase: CPU-bound function workloads.
 		/// </summary>
 		FixedPool,

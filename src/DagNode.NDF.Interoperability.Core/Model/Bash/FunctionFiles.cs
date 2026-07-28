@@ -2,14 +2,11 @@
 
 public class FunctionFiles
 {
-	public AbsolutePath ResultOut { get; set; }
-	public AbsolutePath ResultErr { get; set; }
-	public AbsolutePath ResultLog { get; set; }
-	
-	public AbsolutePath InputIn { get; set; }
+	public AbsolutePath ResultOut { get; set; } = null!;
+	public AbsolutePath ResultErr { get; set; } = null!;
+	public AbsolutePath ResultLog { get; set; } = null!;
 
-	private FunctionWorkDirSettings _workDirSettings;
-	private CallOptions _callOptions;
+	public AbsolutePath InputIn { get; set; } = null!;
 
 	public static FunctionFiles ConfigureFilePaths(AbsolutePath functionWorkDir, CallOptions callOptions, string functionMarkerTag)
 	{

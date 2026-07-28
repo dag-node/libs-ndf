@@ -12,10 +12,10 @@ public class BashProcess: IDisposable
 	public BashProcessSettings BashProcessSettings { get; }
 	public Process Process { get => _process; }
 	private readonly Process _process;
-	private event AsyncTypedEventHandler<Process, ReadOutputStreamEventArgs> EventHandlerReadOutputStreamAsync;
-	private event AsyncTypedEventHandler<Process, ReadErrorStreamEventArgs> EventHandlerReadErrorStreamAsync;
-	public event AsyncTypedEventHandler<BashProcess, FunctionResultReadyEventArgs> EventHandlerFunctionResultReadyAsync;
-	public event AsyncTypedEventHandler<BashProcess, ErrorStreamReceivedEventArgs> EventHandlerErrorStreamReceivedAsync;
+	private event AsyncTypedEventHandler<Process, ReadOutputStreamEventArgs> EventHandlerReadOutputStreamAsync = null!;
+	private event AsyncTypedEventHandler<Process, ReadErrorStreamEventArgs> EventHandlerReadErrorStreamAsync = null!;
+	public event AsyncTypedEventHandler<BashProcess, FunctionResultReadyEventArgs> EventHandlerFunctionResultReadyAsync = null!;
+	public event AsyncTypedEventHandler<BashProcess, ErrorStreamReceivedEventArgs> EventHandlerErrorStreamReceivedAsync = null!;
 	
 	#region Interlocked properties
 	public bool IsRunning { get => _IsRunning; }

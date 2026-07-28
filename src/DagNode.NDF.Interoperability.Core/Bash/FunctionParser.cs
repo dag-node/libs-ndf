@@ -28,6 +28,7 @@ public class FunctionParser
 	/// Parse components of the function end marker line.
 	/// </summary>
 	/// <param name="streamOutputLine">Standard output of the bash process executing functions.</param>
+	/// <param name="functionResultMetadata">Parsed marker components when the line is a valid ___END_FN__ marker; otherwise null.</param>
 	/// <returns>Components of the function end marker line</returns>
 	/// <exception cref="InteroperabilityException">When ___END_FN__ line is invalid.</exception>
 	public static bool TryParseFunctionResultMetadata(string streamOutputLine, out FunctionResultMetadata? functionResultMetadata)

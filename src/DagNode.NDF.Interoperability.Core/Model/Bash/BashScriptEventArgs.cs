@@ -37,9 +37,9 @@ public class FunctionStartEventArgs(CallOptions callOptions, AbsolutePath prefix
 }
 
 public class FunctionFinishedEventArgs : EventArgs {
-	public FunctionStartEventArgs FunctionStartEventArgs { get; set; }
+	public FunctionStartEventArgs FunctionStartEventArgs { get; set; } = null!;
 	public int ExitCode { get; set; }
-	public FunctionResult Result { get; set; }
+	public FunctionResult Result { get; set; } = null!;
 	public IDictionary<string, object> Parameters { get; set; } = new Dictionary<string, object>();
 }
 

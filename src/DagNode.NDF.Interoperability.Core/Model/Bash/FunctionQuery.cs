@@ -24,7 +24,7 @@ public class FunctionQuery(CallOptions callOptions, AbsolutePath prefixPath, Fun
 	
 	/// <summary>
 	/// Replace {prefix}.in {prefix}.out {prefix}.err with correct path.
-	/// TODO: Check >&3 to prevent using eval(function_name ...args ${stream_redirection})
+	/// TODO: Check &gt;&amp;3 to prevent using eval(function_name ...args ${stream_redirection})
 	/// </summary>
 	/// <returns></returns>
 	public string GetStreamRedirectionWithReplacedPrefix() => CallOptions.StreamRedirection.Replace("{prefix}", PrefixPath);

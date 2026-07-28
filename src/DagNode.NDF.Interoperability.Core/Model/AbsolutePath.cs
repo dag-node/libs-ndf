@@ -39,5 +39,5 @@ public sealed class AbsolutePath
 	/// <param name="absolutePath">The AbsolutePath to convert.</param>
 	public static implicit operator string(AbsolutePath absolutePath) => absolutePath.Value;
 
-	public override string? ToString() => Value;
+	public override string ToString() => Value;
 }

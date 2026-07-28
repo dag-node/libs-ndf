@@ -85,13 +85,13 @@ public class CallOptions
 		
 		// It may be required to read function results from different location than the default {prefix}.out:
 		if (resultOutFileLocation.LocationType == ResultLocationType.CustomPath) {
-			if (string.IsNullOrWhiteSpace(resultOutFileLocation.CustomPath))
+			if (resultOutFileLocation.CustomPath is null || string.IsNullOrWhiteSpace(resultOutFileLocation.CustomPath))
 				throw new ArgumentException("CustomPath can't be empty when using ResultLocationType.WriteToCustomPath", nameof(resultOutFileLocation));
 		}
 		
 		// It may be required to pass custom file to function stdin instead of default FunctionArgs only:
 		if (inputFileLocation.LocationType == InputLocationType.TakeFromCustomPath) {
-			if (string.IsNullOrWhiteSpace(inputFileLocation.CustomPath))
+			if (inputFileLocation.CustomPath is null || string.IsNullOrWhiteSpace(inputFileLocation.CustomPath))
 				throw new ArgumentException("CustomPath can't be empty when using InputLocationType.TakeFromCustomPath", nameof(inputFileLocation));
 		}
 	}

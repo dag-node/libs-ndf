@@ -130,7 +130,7 @@ public static class ProcessExtensions
 						throw new InteroperabilityException(ex, "Error reading standard output");
 					}
 				}, cts.Token);
-				readOutputStreamAsync.ConfigureAwait(false);
+				_ = readOutputStreamAsync.ConfigureAwait(false);
 			}
 			// Offload reading of standard error to a separate task
 			if (startInfo.RedirectStandardError && eventHandlerReadErrorStreamAsync != null) {
@@ -148,7 +148,7 @@ public static class ProcessExtensions
 						throw new InteroperabilityException(ex, "Error reading standard error");
 					}
 				}, cts.Token);
-				readErrorStreamAsync.ConfigureAwait(false);
+				_ = readErrorStreamAsync.ConfigureAwait(false);
 			}
 			
 			var tasks = new List<Task> { tcs.Task };

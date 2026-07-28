@@ -58,7 +58,7 @@ public class FunctionWorkDirSettings
 	}
 	private ConfigureFunctionWorkDirDelegate? _configureFunctionWorkDirDelegate;
 
-#warning Update XML doc description
+	// TODO: Update XML doc description
 	/// <summary>
 	/// Function used to create {prefix}.{out|err|log} function specific files.
 	/// This {prefix} is generated dynamically for every function call.

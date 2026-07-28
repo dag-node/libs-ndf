@@ -1,6 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <DebugType>embedded</DebugType>
-    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
-  </PropertyGroup>
-</Project>

@@ -1,0 +1,49 @@
+<Project>
+
+  <!--
+    Shared metadata and build settings for every DagNode.NDF.* package in this
+    repository. Per-project .csproj files set only PackageId, Version,
+    Description, and PackageTags. Set <IsPackable>false</IsPackable> in projects
+    that must not be published (e.g. sample/console apps).
+  -->
+
+  <PropertyGroup>
+    <!-- Ownership / identity -->
+    <Authors>DagNode</Authors>
+    <Company>DagNode</Company>
+    <Product>NDF</Product>
+    <Copyright>Copyright © 2026 DagNode</Copyright>
+
+    <!-- Repository. Shared across all packages: SourceLink resolves commits here. -->
+    <PackageProjectUrl>https://github.com/dag-node/libs-ndf</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/dag-node/libs-ndf</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- Licensing -->
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Ship API docs with each package -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- Reproducible builds and source debugging -->
+    <Deterministic>true</Deterministic>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>embedded</DebugType>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- README lives at the repo root; each package sits one level below this file. -->
+  <ItemGroup Condition="'$(IsPackable)' != 'false'">
+    <None Include="$(MSBuildThisFileDirectory)..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+</Project>

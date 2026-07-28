@@ -12,11 +12,12 @@ env:
 
 permissions:
   contents: read
+  id-token: write   # required for NuGet.org Trusted Publishing (OIDC)
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: nuget   # gate on a protected environment holding NUGET_API_KEY
+    environment: nuget   # must match the NuGet Trusted Publishing policy
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,11 +34,20 @@ jobs:
       - name: Pack all packable projects
         run: dotnet pack --no-build -c Release -o artifacts
 
+      # Trusted Publishing: exchange the GitHub OIDC token for a short-lived
+      # NuGet API key. No stored secret. `user` is the NuGet.org account that
+      # owns the policy (set repo variable NUGET_USER).
+      - name: NuGet login (Trusted Publishing)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ vars.NUGET_USER }}
+
       # Package versions come from each .csproj <Version>; --skip-duplicate makes
       # re-runs safe and lets each package release independently.
       - name: Push to NuGet.org
         run: >
           dotnet nuget push "artifacts/*.nupkg"
-          --api-key "${{ secrets.NUGET_API_KEY }}"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate

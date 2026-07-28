@@ -1,0 +1,13 @@
+# Keeps the SHA-pinned GitHub Actions in .github/workflows/ current.
+# Only the github-actions ecosystem is tracked here; NuGet package updates
+# (e.g. the Core project's PackageReferences) are not managed by Dependabot.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: main
+    schedule:
+      interval: monthly
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"

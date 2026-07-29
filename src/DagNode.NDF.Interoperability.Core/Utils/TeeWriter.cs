@@ -30,7 +30,7 @@ public class TeeWriter(ILogger? logger, StreamWriter streamWriter) : TextWriter,
 		// Forward message to the underlying stream
 		_streamWriter.WriteLine(message);
 		// Additionally log the message with ILogger
-		_logger.LogDebug(message);
+		_logger.LogDebug("{Message}", message.ToLogLine());
 	}
 
 	public override async Task WriteLineAsync(string message)
@@ -38,7 +38,7 @@ public class TeeWriter(ILogger? logger, StreamWriter streamWriter) : TextWriter,
 		// Forward message to the underlying stream
 		await _streamWriter.WriteLineAsync(message).ConfigureAwait(false);
 		// Additionally log the message with ILogger
-		_logger.LogDebug(message);
+		_logger.LogDebug("{Message}", message.ToLogLine());
 	}
 
 	public override void Flush() => _streamWriter.Flush();

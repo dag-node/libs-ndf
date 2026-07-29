@@ -111,7 +111,7 @@ public class FunctionProcessor : IDisposable
 	{
 		string line = args.Error;
 		string syslogMessage = line.ToSyslogMessage(sender.Process.Id, "[ERR]");
-		_logger.LogError(syslogMessage);
+		_logger.LogError("{SyslogMessage}", syslogMessage.ToLogLine());
 		if (_bashScript.BashProcessSettings.TerminateOnErrorStreamReceived) {
 			_bashScript.Dispose();
 		}
@@ -155,7 +155,8 @@ public class FunctionProcessor : IDisposable
 			// Keep track of running functions, we will need function start args to process result from correct outputs
 			PushRunningFunctionItemThreadSafe(startArgs);
 			string bashFunctionArgs = startArgs.FunctionQuery.Compile();
-			if (_bashScript.IsDebug) _logger.LogDebug("FunctionQuery: {FunctionQuery}", bashFunctionArgs);
+			// Carries caller-supplied function args, so escape it like any other untrusted text.
+			if (_bashScript.IsDebug) _logger.LogDebug("FunctionQuery: {FunctionQuery}", bashFunctionArgs.ToLogLine());
 			// Send function call to the Bash process
 			Process currentProcess = GetBashProcess().Process;
 			await currentProcess.StandardInput.WriteLineAsync(bashFunctionArgs).ConfigureAwait(false);

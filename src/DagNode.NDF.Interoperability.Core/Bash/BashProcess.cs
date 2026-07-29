@@ -187,13 +187,13 @@ public class BashProcess: IDisposable
 				// Parse source command results
 				var sourcingResult = FunctionParser.ReadSourcingResultAsync(line);
 				if (sourcingResult != null) {
-					_logger.LogDebug(sourcingResult);
+					_logger.LogDebug("{SourcingResult}", sourcingResult.ToLogLine());
 					continue;
 				}
 				// Parse call function results
 				if (!FunctionParser.TryParseFunctionResultMetadata(line, out FunctionResultMetadata? metadata) || metadata is null) {
 					// Log anything else
-					_logger.LogDebug(line);
+					_logger.LogDebug("{ScriptOutputLine}", line.ToLogLine());
 					continue;
 				}
 				// Process function result

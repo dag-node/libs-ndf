@@ -107,7 +107,7 @@ public class BashProcess: IDisposable
 	
 	public async Task SourceMainFunctionWrapperAsync(CancellationTokenSource cts)
 	{
-		if (!await EnsureRunningAndNotSourcingLock(cts)) {
+		if (!await EnsureRunningAndNotSourcingLock(cts).ConfigureAwait(false)) {
 			_logger.LogWarning("Main function wrapper is already being sourced");
 			return;
 		}
@@ -133,7 +133,7 @@ public class BashProcess: IDisposable
 	
 	public async Task SourceGlobalFunctionsAsync(IList<AbsolutePath> globalFunctionScripts, CancellationTokenSource cts)
 	{
-		if (!await EnsureRunningAndNotSourcingLock(cts)) {
+		if (!await EnsureRunningAndNotSourcingLock(cts).ConfigureAwait(false)) {
 			_logger.LogWarning("Global functions are already being sourced");
 			return;
 		}
@@ -161,7 +161,7 @@ public class BashProcess: IDisposable
 	/// <param name="cts"></param>
 	public async Task SourceScriptFileAsync(AbsolutePath scriptFilePath, CancellationTokenSource cts)
 	{
-		if (!await EnsureRunningAndNotSourcingLock(cts)) {
+		if (!await EnsureRunningAndNotSourcingLock(cts).ConfigureAwait(false)) {
 			_logger.LogWarning("Script file is already being sourced");
 			return;
 		} 
@@ -197,7 +197,7 @@ public class BashProcess: IDisposable
 					continue;
 				}
 				// Process function result
-				await EventHandlerFunctionResultReadyAsync.Invoke(this, new FunctionResultReadyEventArgs(metadata));
+				await EventHandlerFunctionResultReadyAsync.Invoke(this, new FunctionResultReadyEventArgs(metadata)).ConfigureAwait(false);
 			}
 			await Task.Delay(TimeSpan.FromMilliseconds(10), args.CancellationToken).ConfigureAwait(false);
 		}
@@ -207,7 +207,7 @@ public class BashProcess: IDisposable
 	{
 		while (!args.CancellationToken.IsCancellationRequested) {
 			while (await args.StandardError.ReadLineAsync().ConfigureAwait(false) is { } line) {
-				await EventHandlerErrorStreamReceivedAsync.Invoke(this, new ErrorStreamReceivedEventArgs(line));
+				await EventHandlerErrorStreamReceivedAsync.Invoke(this, new ErrorStreamReceivedEventArgs(line)).ConfigureAwait(false);
 			}
 			await Task.Delay(TimeSpan.FromMilliseconds(200), args.CancellationToken).ConfigureAwait(false);
 		}

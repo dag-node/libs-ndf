@@ -144,32 +144,32 @@ public class BashScript : IDisposable
 	    BashProcessSettings? bashProcessSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts);
+		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts).ConfigureAwait(false);
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    FunctionWorkDirSettings? scriptLoggerSettings = null,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts);
+		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts).ConfigureAwait(false);
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    BashProcessSettings bashProcessSettings, FunctionWorkDirSettings functionWorkDirSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    bashProcessSettings, functionWorkDirSettings, logger, cts);
+		    bashProcessSettings, functionWorkDirSettings, logger, cts).ConfigureAwait(false);
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    BashProcessSettings? bashProcessSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts);
+		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts).ConfigureAwait(false);
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    FunctionWorkDirSettings? scriptLoggerSettings = null,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts);
+		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts).ConfigureAwait(false);
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    BashProcessSettings bashProcessSettings, FunctionWorkDirSettings functionWorkDirSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    bashProcessSettings, functionWorkDirSettings, logger, cts);
+		    bashProcessSettings, functionWorkDirSettings, logger, cts).ConfigureAwait(false);
     #endregion Factory overloads
     #region Async factory
     /// <summary>

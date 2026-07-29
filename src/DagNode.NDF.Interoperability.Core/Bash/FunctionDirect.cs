@@ -159,6 +159,42 @@ public class FunctionDirect
 		=> GetBool(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs);
 
 	/// <summary>
+	/// Exit-status form of <see cref="GetBool(AbsolutePath, string, string[])"/> that awaits the
+	/// process instead of blocking the calling thread. Prefer it over <see cref="GetBool(AbsolutePath, string, string[])"/>
+	/// from async code, which otherwise holds a thread for the lifetime of the bash call.
+	/// </summary>
+	/// <param name="bashScriptPath">Absolute path to the bash script file</param>
+	/// <param name="functionName">Name of the bash function to execute.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <param name="cts">Token source cancelling the wait; a new one is created when null.</param>
+	/// <returns>True when the function exited with status 0.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started.</exception>
+	public static async Task<bool> GetBoolAsync(AbsolutePath bashScriptPath, string functionName,
+		string[]? functionArgs = null, CancellationTokenSource? cts = null)
+	{
+		AbsolutePath logFilePathAbsolute = AbsolutePath.Create(GetLogFilePath(bashScriptPath, functionName));
+		ProcessStartInfo processStartInfo = CreateBashProcessStartInfo(logFilePathAbsolute, bashScriptPath, functionName, functionArgs);
+		using Process process = Process.Start(processStartInfo) ?? throw new InteroperabilityException(
+			$"Error starting process for function {functionName}");
+		await process.WaitForExitAsync(cts).ConfigureAwait(false);
+		return process.ExitCode == 0; // True if success, false otherwise
+	}
+
+	/// <summary>
+	/// Non-blocking overload taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <param name="cts">Token source cancelling the wait; a new one is created when null.</param>
+	/// <returns>True when the function exited with status 0.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started.</exception>
+	public static async Task<bool> GetBoolAsync(string scriptFileName, string functionName,
+		string[]? functionArgs = null, CancellationTokenSource? cts = null)
+		=> await GetBoolAsync(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()),
+			functionName, functionArgs, cts).ConfigureAwait(false);
+
+	/// <summary>
 	/// Handling Arrays (newline-separated): If Bash returns an array of strings,
 	/// capture the output into an array in .NET Core:
 	/// </summary>

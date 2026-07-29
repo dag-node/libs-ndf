@@ -10,16 +10,19 @@ public class FunctionParser
 	// ___END_FN__ 1673638457000000000 1673638458000000000 00:00:01.000000 normalized_function_name-B0Ab-1 0
 	// [    11   ] [       19        ] [       19        ] [      15     ] [   arbitrary str no spaces   ] [arbitrary int]
 	public static readonly string FUNCTION_END_MARKER = "___END_FN__"; // 11
-	private static readonly int MIN_FUNCTION_END_LINE_LENGTH = 71; // 64 + 6 + 1
+	private const int MIN_FUNCTION_END_LINE_LENGTH = 71; // 64 + 6 + 1
 
-	private static readonly int FUNCTION_END_MARKER_LENGTH = 11; // FUNCTION_END_MARKER.Length
-	private static readonly int START_TIME_NS_START = 12; // FUNCTION_END_MARKER_LENGTH + 1
-	private static readonly int START_TIME_NS_END = 31; // START_TIME_NS_START + 19
-	private static readonly int END_TIME_NS_START = 32; //START_TIME_NS_END + 1
-	private static readonly int END_TIME_NS_END = 51; // END_TIME_NS_START + 19
-	private static readonly int DURATION_TIMESPAN_START = 52; // END_TIME_NS_END + 1
-	private static readonly int DURATION_TIMESPAN_END = 67; // DURATION_TIMESPAN_START + 15
-	private static readonly int FUNCTION_MARKER_AND_EXIT_CODE_START = 68; // DURATION_TIMESPAN_END + 1
+	// Each offset derives from the one above it, so the table stays consistent with the layout comment.
+	private const int FUNCTION_END_MARKER_LENGTH = 11; // FUNCTION_END_MARKER.Length
+	private const int TIME_NS_LENGTH = 19;
+	private const int DURATION_TIMESPAN_LENGTH = 15;
+	private const int START_TIME_NS_START = FUNCTION_END_MARKER_LENGTH + 1; // 12
+	private const int START_TIME_NS_END = START_TIME_NS_START + TIME_NS_LENGTH; // 31
+	private const int END_TIME_NS_START = START_TIME_NS_END + 1; // 32
+	private const int END_TIME_NS_END = END_TIME_NS_START + TIME_NS_LENGTH; // 51
+	private const int DURATION_TIMESPAN_START = END_TIME_NS_END + 1; // 52
+	private const int DURATION_TIMESPAN_END = DURATION_TIMESPAN_START + DURATION_TIMESPAN_LENGTH; // 67
+	private const int FUNCTION_MARKER_AND_EXIT_CODE_START = DURATION_TIMESPAN_END + 1; // 68
 	
 	public static readonly DateTime UNIX_EPOCH_START = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 	
@@ -49,17 +52,17 @@ public class FunctionParser
 		if (!hasFunctionEndMarker) return false;
 		
 		// Parse components of ___END_FN__ line...
-		ReadOnlySpan<char> startTimeNsSpan = lineSpan.Slice(START_TIME_NS_START, 19); // Start position + length of nanoseconds
+		ReadOnlySpan<char> startTimeNsSpan = lineSpan.Slice(START_TIME_NS_START, TIME_NS_LENGTH); // Start position + length of nanoseconds
 		if (!long.TryParse(startTimeNsSpan, out long startTimeNs)) throw new InteroperabilityException("Invalid function end marker start time ns");
 		
-		ReadOnlySpan<char> endTimeNsSpan = lineSpan.Slice(END_TIME_NS_START, 19); // Start position + length of nanoseconds
+		ReadOnlySpan<char> endTimeNsSpan = lineSpan.Slice(END_TIME_NS_START, TIME_NS_LENGTH); // Start position + length of nanoseconds
 		if (!long.TryParse(endTimeNsSpan, out long endTimeNs)) throw new InteroperabilityException("Invalid function end marker end time ns");
 		
 		// Convert nanoseconds since epoch to UTC DateTime
 		DateTime startTimeUtc = UNIX_EPOCH_START.AddTicks(startTimeNs / 100); // 1 tick = 100 nanoseconds
 		DateTime endTimeUtc = UNIX_EPOCH_START.AddTicks(endTimeNs / 100);
 		
-		ReadOnlySpan<char> durationTimeSpanSpan = lineSpan.Slice(DURATION_TIMESPAN_START, 15); // Start position + length of timespan
+		ReadOnlySpan<char> durationTimeSpanSpan = lineSpan.Slice(DURATION_TIMESPAN_START, DURATION_TIMESPAN_LENGTH); // Start position + length of timespan
 		if (!TimeSpan.TryParseExact(durationTimeSpanSpan, @"hh\:mm\:ss\.ffffff",
 			    CultureInfo.InvariantCulture, out TimeSpan duration))
 			throw new InteroperabilityException("Invalid function end marker duration");

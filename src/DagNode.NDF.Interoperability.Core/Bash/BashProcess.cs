@@ -107,7 +107,7 @@ public class BashProcess: IDisposable
 	
 	public async Task SourceMainFunctionWrapperAsync(CancellationTokenSource cts)
 	{
-		if (!await EnsureRunningAndNotSourcingLock(cts)) {
+		if (!await EnsureRunningAndNotSourcingLock(cts).ConfigureAwait(false)) {
 			_logger.LogWarning("Main function wrapper is already being sourced");
 			return;
 		}
@@ -133,7 +133,7 @@ public class BashProcess: IDisposable
 	
 	public async Task SourceGlobalFunctionsAsync(IList<AbsolutePath> globalFunctionScripts, CancellationTokenSource cts)
 	{
-		if (!await EnsureRunningAndNotSourcingLock(cts)) {
+		if (!await EnsureRunningAndNotSourcingLock(cts).ConfigureAwait(false)) {
 			_logger.LogWarning("Global functions are already being sourced");
 			return;
 		}
@@ -161,7 +161,7 @@ public class BashProcess: IDisposable
 	/// <param name="cts"></param>
 	public async Task SourceScriptFileAsync(AbsolutePath scriptFilePath, CancellationTokenSource cts)
 	{
-		if (!await EnsureRunningAndNotSourcingLock(cts)) {
+		if (!await EnsureRunningAndNotSourcingLock(cts).ConfigureAwait(false)) {
 			_logger.LogWarning("Script file is already being sourced");
 			return;
 		} 
@@ -187,17 +187,17 @@ public class BashProcess: IDisposable
 				// Parse source command results
 				var sourcingResult = FunctionParser.ReadSourcingResultAsync(line);
 				if (sourcingResult != null) {
-					_logger.LogDebug(sourcingResult);
+					_logger.LogDebug("{SourcingResult}", sourcingResult.ToLogLine());
 					continue;
 				}
 				// Parse call function results
 				if (!FunctionParser.TryParseFunctionResultMetadata(line, out FunctionResultMetadata? metadata) || metadata is null) {
 					// Log anything else
-					_logger.LogDebug(line);
+					_logger.LogDebug("{ScriptOutputLine}", line.ToLogLine());
 					continue;
 				}
 				// Process function result
-				await EventHandlerFunctionResultReadyAsync.Invoke(this, new FunctionResultReadyEventArgs(metadata));
+				await EventHandlerFunctionResultReadyAsync.Invoke(this, new FunctionResultReadyEventArgs(metadata)).ConfigureAwait(false);
 			}
 			await Task.Delay(TimeSpan.FromMilliseconds(10), args.CancellationToken).ConfigureAwait(false);
 		}
@@ -207,7 +207,7 @@ public class BashProcess: IDisposable
 	{
 		while (!args.CancellationToken.IsCancellationRequested) {
 			while (await args.StandardError.ReadLineAsync().ConfigureAwait(false) is { } line) {
-				await EventHandlerErrorStreamReceivedAsync.Invoke(this, new ErrorStreamReceivedEventArgs(line));
+				await EventHandlerErrorStreamReceivedAsync.Invoke(this, new ErrorStreamReceivedEventArgs(line)).ConfigureAwait(false);
 			}
 			await Task.Delay(TimeSpan.FromMilliseconds(200), args.CancellationToken).ConfigureAwait(false);
 		}

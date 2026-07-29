@@ -7,11 +7,25 @@ using DagNode.NDF.Interoperability.Model.Bash;
 namespace DagNode.NDF.Interoperability.Bash;
 
 #region Delegate definitions
+/// <summary>Runs before the function working directory is created, letting the caller veto the path.</summary>
+/// <param name="workDirPath">Directory about to be created.</param>
 public delegate void OnBeforeCreateFunctionWorkDirDelegate(string workDirPath);
+
+/// <summary>Runs once the function working directory exists, for seeding it with extra content.</summary>
+/// <param name="workDirPath">Directory that now exists.</param>
 public delegate void OnAfterCreateFunctionWorkDirDelegate(string workDirPath);
 
 #endregion Delegate definitions
 
+/// <summary>
+/// A long-lived bash process with one script sourced into it, so a run of function calls pays the
+/// sourcing cost once. Each call is dispatched asynchronously, writes its streams to per-call
+/// {prefix} files under the configured working directory, and is matched back to its caller by a
+/// marker line on stdout; the captured output is then parsed into the requested .NET type.
+/// Create instances with <see cref="CreateAsync(BashScriptSettings, BashProcessSettings, FunctionWorkDirSettings, ILogger, CancellationTokenSource)"/>
+/// and dispose them to stop the process. For one-off calls that do not justify a resident process,
+/// use <see cref="FunctionDirect"/> instead.
+/// </summary>
 public class BashScript : IDisposable
 {
 	#region Constructor settings
@@ -95,6 +109,10 @@ public class BashScript : IDisposable
     
     #endregion Lifecycle hooks
     #region Configure function work directory
+    /// <summary>
+    /// Directory this instance's function calls write their {prefix} files to, as resolved by
+    /// <see cref="FunctionWorkDirSettings.ConfigureFunctionWorkDir"/> and verified to exist during construction.
+    /// </summary>
     public AbsolutePath ConfiguredFunctionWorkDir { get => _configuredFunctionWorkDir; }
     private AbsolutePath _configuredFunctionWorkDir;
     private string ConfigureAndValidateFunctionWorkDir(string scriptFileNameNormalized)
@@ -140,47 +158,93 @@ public class BashScript : IDisposable
     
     #endregion Configure working directory
     #region Factory overloads
+    /// <summary>Creates and starts an instance for a script named relative to the program directory.</summary>
+    /// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+    /// <param name="bashProcessSettings">Process configuration; defaults are used when null.</param>
+    /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
+    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    BashProcessSettings? bashProcessSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts);
+		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts).ConfigureAwait(false);
+
+    /// <summary>Creates and starts an instance, overriding only where the function files are written.</summary>
+    /// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+    /// <param name="scriptLoggerSettings">Working directory configuration; defaults are used when null.</param>
+    /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
+    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    FunctionWorkDirSettings? scriptLoggerSettings = null,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts);
+		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts).ConfigureAwait(false);
+
+    /// <summary>Creates and starts an instance with both process and working directory configured.</summary>
+    /// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+    /// <param name="bashProcessSettings">Process configuration.</param>
+    /// <param name="functionWorkDirSettings">Working directory configuration.</param>
+    /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
+    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    BashProcessSettings bashProcessSettings, FunctionWorkDirSettings functionWorkDirSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    bashProcessSettings, functionWorkDirSettings, logger, cts);
+		    bashProcessSettings, functionWorkDirSettings, logger, cts).ConfigureAwait(false);
+
+    /// <summary>Creates and starts an instance for a script at an absolute path.</summary>
+    /// <param name="scriptFilePath">Absolute path to the bash script.</param>
+    /// <param name="bashProcessSettings">Process configuration; defaults are used when null.</param>
+    /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
+    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    BashProcessSettings? bashProcessSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts);
+		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts).ConfigureAwait(false);
+
+    /// <summary>Creates and starts an instance at an absolute path, overriding only the working directory.</summary>
+    /// <param name="scriptFilePath">Absolute path to the bash script.</param>
+    /// <param name="scriptLoggerSettings">Working directory configuration; defaults are used when null.</param>
+    /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
+    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    FunctionWorkDirSettings? scriptLoggerSettings = null,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts);
+		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts).ConfigureAwait(false);
+
+    /// <summary>Creates and starts an instance at an absolute path with both settings configured.</summary>
+    /// <param name="scriptFilePath">Absolute path to the bash script.</param>
+    /// <param name="bashProcessSettings">Process configuration.</param>
+    /// <param name="functionWorkDirSettings">Working directory configuration.</param>
+    /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
+    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    BashProcessSettings bashProcessSettings, FunctionWorkDirSettings functionWorkDirSettings,
 	    ILogger? logger = null, CancellationTokenSource? cts = null)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    bashProcessSettings, functionWorkDirSettings, logger, cts);
+		    bashProcessSettings, functionWorkDirSettings, logger, cts).ConfigureAwait(false);
     #endregion Factory overloads
     #region Async factory
     /// <summary>
-    /// Default factory method.
+    /// Default factory method. Validates the script, prepares the working and PID directories,
+    /// starts the resident bash process and sources the script, so the returned instance is ready
+    /// to take function calls. Construction is asynchronous because sourcing is.
     /// </summary>
-    /// <param name="bashScriptSettings"></param>
-    /// <param name="bashProcessSettings"></param>
-    /// <param name="functionWorkDirSettings"></param>
-    /// <param name="logger"></param>
-    /// <param name="cts"></param>
-    /// <returns></returns>
+    /// <param name="bashScriptSettings">Which script to source and how its calls are tagged.</param>
+    /// <param name="bashProcessSettings">Process configuration; defaults are used when null.</param>
+    /// <param name="functionWorkDirSettings">Working directory configuration; defaults are used when null.</param>
+    /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/> when null.</param>
+    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <returns>A started instance with the script already sourced.</returns>
+    /// <exception cref="InteroperabilityException">When <paramref name="bashScriptSettings"/> is null, the script is missing or unreadable, or the working directory cannot be prepared.</exception>
     public static async Task<BashScript> CreateAsync(
 	    BashScriptSettings bashScriptSettings,
 	    BashProcessSettings? bashProcessSettings = null,	
@@ -190,7 +254,7 @@ public class BashScript : IDisposable
     {
 	    if (bashScriptSettings == null) throw new InteroperabilityException(nameof(bashScriptSettings));
 	    cts ??= new CancellationTokenSource();
-	    logger ??= LoggingFactory.CreateLogger<BashScript>(bashScriptSettings.IsDebug);
+	    logger ??= LoggingFactory.CreateLogger<BashScript>();
 	    var bashScript = new BashScript(bashScriptSettings, bashProcessSettings, functionWorkDirSettings, logger, cts);
 	    // Start bash processes and check for enqueued function calls
 	    await bashScript.StartAsync().ConfigureAwait(false);
@@ -210,7 +274,8 @@ public class BashScript : IDisposable
 	    BashScriptSettings = bashScriptSettings ?? throw new ArgumentException(nameof(bashScriptSettings));
 	    BashProcessSettings = bashProcessSettings ?? BashProcessSettings.CreateFactoryDefault;
 	    FunctionWorkDirSettings = functionWorkDirSettings ?? FunctionWorkDirSettings.CreateFactoryDefault;
-	    _logger = logger ?? LoggingFactory.CreateLogger<BashScript>(bashScriptSettings.IsDebug);
+	    _logger = logger ?? LoggingFactory.CreateLogger<BashScript>();
+	    // IsDebug gates LogDebug calls, so it tracks what the configured logger will actually emit.
 	    BashScriptSettings.IsDebug = _logger.IsEnabled(LogLevel.Debug);
 	    _cts = cts ?? new CancellationTokenSource();
 	    if (bashScriptSettings.UseInstanceMarkerTag) {
@@ -229,6 +294,19 @@ public class BashScript : IDisposable
     
     #endregion Constructor logic
     
+    /// <summary>
+    /// Blocking wrapper over CallFunctionAsync&lt;T&gt;, for callers that are not themselves async.
+    /// Every await on this path uses ConfigureAwait(false), so blocking here does not deadlock on a
+    /// synchronization context; it does hold the calling thread for the whole bash call. A handler
+    /// attached to <see cref="EventHandlerFunctionStartAsync"/> or
+    /// <see cref="EventHandlerFunctionFinishedAsync"/> that resumes on a captured context
+    /// reintroduces the deadlock, since it runs inside this call. From async code call
+    /// CallFunctionAsync&lt;T&gt; instead.
+    /// </summary>
+    /// <typeparam name="T">Type the function's output is parsed into.</typeparam>
+    /// <param name="functionName">Name of a function defined in the sourced script.</param>
+    /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
+    /// <returns>The function's output parsed as <typeparamref name="T"/>.</returns>
     public T CallFunction<T>(string functionName, params string[] functionArgs)
 	    => CallFunctionAsync<T>(functionName, functionArgs)
 		    .GetAwaiter()
@@ -363,6 +441,13 @@ public class BashScript : IDisposable
 	    return result;
     }
 
+    /// <summary>
+    /// Re-sources the configured script and any global function scripts into the running bash
+    /// process, then raises <see cref="EventHandlerScriptSourcedAsync"/>. Already performed during
+    /// <see cref="CreateAsync(BashScriptSettings, BashProcessSettings, FunctionWorkDirSettings, ILogger, CancellationTokenSource)"/>;
+    /// call it again to pick up edits to the script file.
+    /// </summary>
+    /// <returns>A task completing once every script is sourced and the hook has run.</returns>
     public async Task SourceScriptFilesAsync()
     {
 	    await _functionProcessor.SourceScriptFilesAsync().ConfigureAwait(false);
@@ -414,10 +499,18 @@ public class BashScript : IDisposable
     
     #endregion Function sequence numbers
     private async Task StartAsync() => await _functionProcessor.StartAsync().ConfigureAwait(false);
+    /// <summary>
+    /// Renders the function calls this instance has dispatched, in order, for diagnostics.
+    /// </summary>
+    /// <returns>A human-readable trace of the call history.</returns>
     public string GetTrace() => _functionProcessor.PrintFunctionCallTrace();
     
 	#region Dispose
 	
+    /// <summary>
+    /// Cancels outstanding function calls and shuts down the resident bash process. Calls still in
+    /// flight do not complete, so await them before disposing.
+    /// </summary>
     public void Dispose()
     {
 	    if (!_cts.IsCancellationRequested) _cts.Cancel();

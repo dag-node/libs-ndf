@@ -35,8 +35,10 @@ public class LinuxUtils
 				.ConfigureAsShellCommand("/usr/bin/bash", 
 					[CheckAndMountTmpfsBsInline]);
 			process.Start();
-			process.WaitForExit();
+			// Drain stdout before awaiting exit: blocking on exit first stalls the caller's thread
+			// and risks wedging the child once it fills the pipe buffer.
 			await ReadResultAsync(FunctionWorkDirSettings.FunctionBasePidDir).ConfigureAwait(false);
+			await process.WaitForExitAsync(cts).ConfigureAwait(false);
 			async Task ReadResultAsync(string path) {
 				while (!cts.IsCancellationRequested &&
 				       await process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } readerLine) {

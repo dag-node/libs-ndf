@@ -212,8 +212,10 @@ public static class ProcessExtensions
 		if (cts == null) throw new ArgumentException(nameof(cts));
 		if (timeout.TotalMilliseconds < 1.0) throw new ArgumentException(nameof(timeout));
 		try {
-			if (await Task.WhenAny(task, Task.Delay(timeout, cts.Token)).ConfigureAwait(false) == task)
+			if (await Task.WhenAny(task, Task.Delay(timeout, cts.Token)).ConfigureAwait(false) == task) {
 				await task.ConfigureAwait(false);
+				return;
+			}
 			throw new TimeoutException($"The operation has timed out after {timeout.TotalMilliseconds}ms");
 		} finally {
 			cts.Cancel();
@@ -227,7 +229,8 @@ public static class ProcessExtensions
 		if (cts == null) throw new ArgumentException(nameof(cts));
 		if (timeout.TotalMilliseconds < 1.0) throw new ArgumentException(nameof(timeout));
 		try {
-			if (await Task.WhenAny(task, Task.Delay(timeout, cts.Token)) == task) return await task;
+			if (await Task.WhenAny(task, Task.Delay(timeout, cts.Token)).ConfigureAwait(false) == task)
+				return await task.ConfigureAwait(false);
 			throw new TimeoutException($"The operation has timed out after {timeout.TotalMilliseconds}ms");
 		} finally {
 			cts.Cancel();

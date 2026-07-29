@@ -1,5 +1,13 @@
 ﻿namespace DagNode.NDF.Interoperability.Model.Bash;
 
+/// <summary>
+/// Per-call configuration pairing a bash stream redirection with the file locations the result is
+/// read back from. The redirection string is appended to the generated function call, so
+/// <c>1&gt;{prefix}.out 2&gt;{prefix}.err</c> writes the two streams to separate files while
+/// <c>1&gt;{prefix}.out 2&gt;&amp;1</c> folds stderr into stdout and leaves nothing at {prefix}.err.
+/// Build instances through the factory methods: they keep the result locations consistent with the
+/// redirection, so a discarded stream is not later read from a file that was never written.
+/// </summary>
 public class CallOptions
 {
 	/// <summary>
@@ -99,6 +107,9 @@ public class CallOptions
 	#endregion Private constructors
 	#region Factory methods
 
+	/// <summary>
+	/// Default options: <c>1&gt;{prefix}.out 2&gt;{prefix}.err</c>, reading the result from {prefix}.out.
+	/// </summary>
 	public static CallOptions CreateFactoryDefault => WithStreamRedirection(StreamRedirectionType.RedirectToFiles);
 
 	///  <summary>
@@ -112,7 +123,7 @@ public class CallOptions
 	///  <param name="resultFileOut">Optionally override FunctionResultLocation</param>
 	///  <param name="resultFileErr">Optionally override FunctionResultLocation</param>
 	///  <param name="resultFileLog">Optionally override FunctionResultLocation</param>
-	///  <returns></returns>
+	///  <returns>Options whose result locations already match the streams the chosen redirection writes.</returns>
 	public static CallOptions WithStreamRedirection(
 		StreamRedirectionType streamRedirectionType,
 		FunctionInputLocation? inputFileIn = null,
@@ -250,7 +261,9 @@ public class CallOptions
 	///  <param name="resultFileOut">Override default FunctionResultLocation</param>
 	///  <param name="resultFileErr">Override default FunctionResultLocation</param>
 	///  <param name="resultFileLog">Override default FunctionResultLocation</param>
-	///  <returns></returns>
+	///  <returns>Options using the given redirection verbatim, unless the string names a <see cref="StreamRedirectionType"/>.</returns>
+	///  <exception cref="ArgumentNullException">When <paramref name="streamRedirection"/> is null or blank.</exception>
+	///  <exception cref="ArgumentException">When <paramref name="streamRedirection"/> contains neither &gt; nor &lt; and so is not a redirection.</exception>
 	public static CallOptions WithStreamRedirection(
 		string streamRedirection = "Default",
 		FunctionInputLocation? inputFileIn = null,
@@ -271,6 +284,11 @@ public class CallOptions
 			streamRedirection);
 	}
 
+	/// <summary>
+	/// Options that read nothing back: all three result locations are
+	/// <see cref="FunctionResultLocation.None"/>, leaving only <see cref="FunctionResult.ExitCode"/>.
+	/// </summary>
+	/// <returns>Options for a call whose output is irrelevant.</returns>
 	public static CallOptions WithExitCodeOnly()
 		=> new CallOptions(
 			FunctionInputLocation.Default,
@@ -279,6 +297,16 @@ public class CallOptions
 			FunctionResultLocation.None,
 			Bash.StreamRedirection.Default);
 	
+	/// <summary>
+	/// Options reading the three result files from explicit locations. Nothing cross-checks them
+	/// against <paramref name="streamRedirection"/>, so a location must name a file the redirection
+	/// actually writes.
+	/// </summary>
+	/// <param name="resultOutLocation">Where the standard output result is read from.</param>
+	/// <param name="resultErrLocation">Where the standard error result is read from.</param>
+	/// <param name="resultLogLocation">Where the {prefix}.log result is read from.</param>
+	/// <param name="streamRedirection">Redirection appended to the call, <c>1&gt;{prefix}.out 2&gt;{prefix}.err</c> by default.</param>
+	/// <returns>Options with the given locations and redirection.</returns>
 	public static CallOptions WithResultLocation(
 		FunctionResultLocation resultOutLocation,
 		FunctionResultLocation resultErrLocation,
@@ -291,9 +319,27 @@ public class CallOptions
 			resultLogLocation,
 			streamRedirection);
 	
+	/// <summary>
+	/// Options feeding the call from an input file. Pair it with a [SUBSTITUTE] or [TAKE IN]
+	/// redirection such as <c>&lt; {prefix}.in 1&gt;{prefix}.out 2&gt;{prefix}.err</c>, and write
+	/// {prefix}.in before the function starts.
+	/// </summary>
+	/// <param name="inputLocation">Where the function's input is taken from.</param>
+	/// <param name="streamRedirection">Redirection appended to the call, <c>1&gt;{prefix}.out 2&gt;{prefix}.err</c> by default.</param>
+	/// <returns>Options with the given input location, results left at their defaults.</returns>
 	public static CallOptions WithInputLocation(FunctionInputLocation inputLocation, string streamRedirection = Bash.StreamRedirection.Default)
 		=> new CallOptions(inputLocation, streamRedirection);
 	
+	/// <summary>
+	/// Options with every location and the redirection set explicitly. Nothing is inferred, so the
+	/// locations must match the streams <paramref name="streamRedirection"/> writes.
+	/// </summary>
+	/// <param name="inputLocation">Where the function's input is taken from.</param>
+	/// <param name="resultOutLocation">Where the standard output result is read from.</param>
+	/// <param name="resultErrLocation">Where the standard error result is read from.</param>
+	/// <param name="resultLogLocation">Where the {prefix}.log result is read from.</param>
+	/// <param name="streamRedirection">Redirection appended to the call; "Default" resolves to <c>1&gt;{prefix}.out 2&gt;{prefix}.err</c>.</param>
+	/// <returns>Options exactly as specified.</returns>
 	public static CallOptions Custom(
 		FunctionInputLocation inputLocation,
 		FunctionResultLocation resultOutLocation,

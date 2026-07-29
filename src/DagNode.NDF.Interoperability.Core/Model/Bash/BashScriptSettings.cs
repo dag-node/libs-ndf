@@ -10,6 +10,12 @@
 // 	// Optional: Define shared behavior here if needed.
 // }
 
+/// <summary>
+/// Identifies the bash script a <see cref="DagNode.NDF.Interoperability.Bash.BashScript"/> instance sources and controls how its
+/// function calls are tagged. Construct it from a filename relative to the program directory or from
+/// an absolute path; the derived hash and normalised name are computed once here and reused to build
+/// per-call working directories and {prefix} marker tags.
+/// </summary>
 public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 {
 	/// <summary>
@@ -17,7 +23,7 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	/// Constructs full absolute path to the scriptFileName relative to program directory.
 	/// </summary>
 	/// <param name="scriptFileName">Filename of the script.sh used to evaluate bash functions.</param>
-	/// <returns></returns>
+	/// <returns>Settings pointing at the resolved absolute path, with all other values left at their defaults.</returns>
 	public static BashScriptSettings CreateFactoryDefault(string scriptFileName)
 		=> new(scriptFileName) {
 			// Configure defaults
@@ -27,7 +33,7 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	/// Static factory method to setup instance with default configuration.
 	/// </summary>
 	/// <param name="scriptFilePath">Full absolute path to the script.sh used to evaluate bash functions.</param>
-	/// <returns></returns>
+	/// <returns>Settings for that script, with all other values left at their defaults.</returns>
 	public static BashScriptSettings CreateFactoryDefault(AbsolutePath scriptFilePath)
 		=> new(scriptFilePath) {
 			// Configure defaults
@@ -38,6 +44,8 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	/// Not related to BashProcessArgs --debug or --verbose
 	/// </summary>
 	public bool IsDebug { get; set; } = false;
+
+	/// <summary>Absolute path to the script whose functions this instance calls.</summary>
 	public AbsolutePath ScriptFilePath { get; }
 
 	/// <summary>
@@ -45,8 +53,20 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	/// Global functions become available inside ScriptFilePath script.
 	/// </summary>
 	public IList<AbsolutePath> GlobalFunctionScriptFilePaths { get; set; } = new List<AbsolutePath>();
+	/// <summary>
+	/// SHA-1 of <see cref="ScriptFilePath"/>. Its first five characters name the per-script
+	/// subdirectory under the working directory, keeping same-named scripts in different
+	/// locations apart.
+	/// </summary>
 	public string ScriptFilePathHash { get; set; }
+
+	/// <summary>File name of the script, including extension.</summary>
 	public string ScriptFileName { get; }
+
+	/// <summary>
+	/// <see cref="ScriptFileName"/> reduced to ASCII with whitespace stripped, so it is safe to
+	/// embed in directory names and {prefix} marker tags.
+	/// </summary>
 	public string ScriptFileNameNormalized { get; }
 
 	/// <summary>
@@ -66,6 +86,11 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	/// <param name="scriptFileName">Filename of the bash script relative to program directory.</param>
 	public BashScriptSettings(string scriptFileName):
 		this(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory())) { }
+	/// <summary>
+	/// Basic configuration of the bash script runner.
+	/// </summary>
+	/// <param name="scriptFilePath">Absolute path to the bash script.</param>
+	/// <exception cref="ArgumentException">When <paramref name="scriptFilePath"/> is null or blank.</exception>
 	public BashScriptSettings(AbsolutePath scriptFilePath)
 	{
 		if (string.IsNullOrWhiteSpace(scriptFilePath)) {

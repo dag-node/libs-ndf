@@ -9,7 +9,13 @@ namespace DagNode.NDF.Interoperability.Bash;
 /// </summary>
 public class FunctionDirect
 {
+	/// <summary>
+	/// Writes the composed <c>bash -c</c> command line to the console before each call.
+	/// Independent of <see cref="Model.Bash.BashScriptSettings.IsDebug"/> and of ILogger.
+	/// </summary>
 	public static bool IsDebug { get; set; } = false;
+
+	/// <summary>Interpreter every call is launched with. Defaults to /usr/bin/bash.</summary>
 	public static string BashPath { get; set; } = "/usr/bin/bash";
 	
 	/// <summary>
@@ -63,6 +69,16 @@ public class FunctionDirect
 		return await reader.ReadToEndAsync().ConfigureAwait(false); // Capture and return output
 	}
 
+	/// <summary>
+	/// Overload of <see cref="GetStringAsync(AbsolutePath, string, string[], bool, bool, AbsolutePath)"/> taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <param name="redirectStandardOutput">Optionally suppress reading results from standard output stream</param>
+	/// <param name="redirectStandardError">Optionally suppress reading results from standard error stream</param>
+	/// <param name="logFilePath">Optional non-default absolute path to the logfile for this function call</param>
+	/// <returns>Raw standard output of the function.</returns>
 	public static async Task<string> GetStringAsync(string scriptFileName, string functionName, string[]? functionArgs = null,
 		bool redirectStandardOutput = true, bool redirectStandardError = true, AbsolutePath? logFilePath = null)
 	{
@@ -70,17 +86,43 @@ public class FunctionDirect
 		return await GetStringAsync(scriptPath, functionName, functionArgs, redirectStandardOutput, redirectStandardError, logFilePath).ConfigureAwait(false);
 	}
 
+	/// <summary>
+	/// Calls the function and parses its standard output as the enum <typeparamref name="T"/>, case-insensitively.
+	/// </summary>
+	/// <typeparam name="T">Enum type the output is parsed into.</typeparam>
+	/// <param name="bashScriptPath">Absolute path to the bash script file</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed enum value.</returns>
+	/// <exception cref="InvalidOperationException">When the output does not name a member of <typeparamref name="T"/>.</exception>
 	public static async Task<T> GetEnumAsync<T>(AbsolutePath bashScriptPath, string functionName, string[]? functionArgs = null) where T : struct, IConvertible
 	{
 		var value = await GetStringAsync(bashScriptPath, functionName, functionArgs).ConfigureAwait(false);
 		return value.ParseEnum<T>();
 	}
 
+	/// <summary>
+	/// Overload of <see cref="GetEnumAsync{T}(AbsolutePath, string, string[])"/> taking a script filename relative to the program directory.
+	/// </summary>
+	/// <typeparam name="T">Enum type the output is parsed into.</typeparam>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed enum value.</returns>
+	/// <exception cref="InvalidOperationException">When the output does not name a member of <typeparamref name="T"/>.</exception>
 	public static async Task<T> GetEnumAsync<T>(string scriptFileName, string functionName, string[]? functionArgs = null) where T : struct, IConvertible
 		=> await GetEnumAsync<T>(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs).ConfigureAwait(false);
 
 	# region Parse number from GetString
 	
+	/// <summary>
+	/// Calls the function and parses its standard output as an int.
+	/// </summary>
+	/// <param name="bashScriptPath">Absolute path to the bash script file</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<int> GetIntAsync(AbsolutePath bashScriptPath, string functionName, string[]? functionArgs = null)
 	{
 		var value = await GetStringAsync(bashScriptPath, functionName, functionArgs).ConfigureAwait(false);
@@ -90,9 +132,25 @@ public class FunctionDirect
 		return number;
 	}
 
+	/// <summary>
+	/// Overload of <see cref="GetIntAsync(AbsolutePath, string, string[])"/> taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<int> GetIntAsync(string scriptFileName, string functionName, string[]? functionArgs = null)
 		=> await GetIntAsync(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs).ConfigureAwait(false);
 
+	/// <summary>
+	/// Calls the function and parses its standard output as a long.
+	/// </summary>
+	/// <param name="bashScriptPath">Absolute path to the bash script file</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<long> GetLongAsync(AbsolutePath bashScriptPath, string functionName, string[]? functionArgs = null)
 	{
 		var value = await GetStringAsync(bashScriptPath, functionName, functionArgs).ConfigureAwait(false);
@@ -102,9 +160,25 @@ public class FunctionDirect
 		return number;
 	}
 	
+	/// <summary>
+	/// Overload of <see cref="GetLongAsync(AbsolutePath, string, string[])"/> taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<long> GetLongAsync(string scriptFileName, string functionName, string[]? functionArgs = null)
 		=> await GetLongAsync(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs).ConfigureAwait(false);
 
+	/// <summary>
+	/// Calls the function and parses its standard output as a double.
+	/// </summary>
+	/// <param name="bashScriptPath">Absolute path to the bash script file</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<double> GetDoubleAsync(AbsolutePath bashScriptPath, string functionName, string[]? functionArgs = null)
 	{
 		var value = await GetStringAsync(bashScriptPath, functionName, functionArgs).ConfigureAwait(false);
@@ -114,9 +188,25 @@ public class FunctionDirect
 		return number;
 	}
 	
+	/// <summary>
+	/// Overload of <see cref="GetDoubleAsync(AbsolutePath, string, string[])"/> taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<double> GetDoubleAsync(string scriptFileName, string functionName, string[]? functionArgs = null)
 		=> await GetDoubleAsync(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs).ConfigureAwait(false);
 
+	/// <summary>
+	/// Calls the function and parses its standard output as a decimal.
+	/// </summary>
+	/// <param name="bashScriptPath">Absolute path to the bash script file</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<decimal> GetDecimalAsync(AbsolutePath bashScriptPath, string functionName, string[]? functionArgs = null)
 	{
 		var value = await GetStringAsync(bashScriptPath, functionName, functionArgs).ConfigureAwait(false);
@@ -126,6 +216,14 @@ public class FunctionDirect
 		return number;
 	}
 	
+	/// <summary>
+	/// Overload of <see cref="GetDecimalAsync(AbsolutePath, string, string[])"/> taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>The parsed value.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<decimal> GetDecimalAsync(string scriptFileName, string functionName, string[]? functionArgs = null)
 		=> await GetDecimalAsync(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs).ConfigureAwait(false);
 	
@@ -155,6 +253,14 @@ public class FunctionDirect
 		return process.ExitCode == 0; // True if success, false otherwise
 	}
 	
+	/// <summary>
+	/// Blocking overload taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>True when the function exited with status 0.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started.</exception>
 	public static bool GetBool(string scriptFileName, string functionName, string[]? functionArgs = null)
 		=> GetBool(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs);
 
@@ -215,6 +321,14 @@ public class FunctionDirect
 		return output.Split(['\n'], StringSplitOptions.RemoveEmptyEntries).ToList();
 	}
 	
+	/// <summary>
+	/// Overload of <see cref="GetArrayAsync(AbsolutePath, string, string[])"/> taking a script filename relative to the program directory.
+	/// </summary>
+	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
+	/// <param name="functionName">Name of the bash function to execute, the function must be present in the script.</param>
+	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
+	/// <returns>One entry per non-empty newline-separated line of standard output.</returns>
+	/// <exception cref="InteroperabilityException">When the bash process cannot be started, or the output does not parse.</exception>
 	public static async Task<List<string>> GetArrayAsync(string scriptFileName, string functionName, string[]? functionArgs = null)
 		=> await GetArrayAsync(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()), functionName, functionArgs).ConfigureAwait(false);
 

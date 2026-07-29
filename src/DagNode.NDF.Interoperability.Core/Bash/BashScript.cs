@@ -190,7 +190,7 @@ public class BashScript : IDisposable
     {
 	    if (bashScriptSettings == null) throw new InteroperabilityException(nameof(bashScriptSettings));
 	    cts ??= new CancellationTokenSource();
-	    logger ??= LoggingFactory.CreateLogger<BashScript>(bashScriptSettings.IsDebug);
+	    logger ??= LoggingFactory.CreateLogger<BashScript>();
 	    var bashScript = new BashScript(bashScriptSettings, bashProcessSettings, functionWorkDirSettings, logger, cts);
 	    // Start bash processes and check for enqueued function calls
 	    await bashScript.StartAsync().ConfigureAwait(false);
@@ -210,7 +210,8 @@ public class BashScript : IDisposable
 	    BashScriptSettings = bashScriptSettings ?? throw new ArgumentException(nameof(bashScriptSettings));
 	    BashProcessSettings = bashProcessSettings ?? BashProcessSettings.CreateFactoryDefault;
 	    FunctionWorkDirSettings = functionWorkDirSettings ?? FunctionWorkDirSettings.CreateFactoryDefault;
-	    _logger = logger ?? LoggingFactory.CreateLogger<BashScript>(bashScriptSettings.IsDebug);
+	    _logger = logger ?? LoggingFactory.CreateLogger<BashScript>();
+	    // IsDebug gates LogDebug calls, so it tracks what the configured logger will actually emit.
 	    BashScriptSettings.IsDebug = _logger.IsEnabled(LogLevel.Debug);
 	    _cts = cts ?? new CancellationTokenSource();
 	    if (bashScriptSettings.UseInstanceMarkerTag) {

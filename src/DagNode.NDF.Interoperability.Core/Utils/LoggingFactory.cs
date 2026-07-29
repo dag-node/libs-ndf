@@ -1,27 +1,31 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DagNode.NDF.Interoperability;
 
 /// <summary>
-/// This class ensures that if DI isn't used, a default console logger will be provided.
+/// Supplies the <see cref="ILogger"/> used by types that are constructed without one.
+/// Defaults to <see cref="NullLoggerFactory"/>, so a library consumer that never opts in
+/// pays nothing and gets no output; an application enables logging by calling
+/// <see cref="Configure(ILoggerFactory)"/> with a factory holding its own providers.
 /// </summary>
 public static class LoggingFactory
 {
-	private static ILoggerFactory? s_loggerFactory;
+	private static volatile ILoggerFactory s_loggerFactory = NullLoggerFactory.Instance;
 
-	public static void Configure(Action<ILoggingBuilder> configure)
-	{
-		var factory = LoggerFactory.Create(configure);
-		s_loggerFactory = factory;
-	}
+	/// <summary>
+	/// Sets the factory backing every subsequent <see cref="CreateLogger{T}"/> call. The caller
+	/// owns the factory's lifetime and must keep it alive for as long as the loggers are used.
+	/// </summary>
+	/// <param name="loggerFactory">Factory carrying the application's logging providers.</param>
+	/// <exception cref="ArgumentNullException">When <paramref name="loggerFactory"/> is null.</exception>
+	public static void Configure(ILoggerFactory loggerFactory) =>
+		s_loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
 
-	public static ILogger<T> CreateLogger<T>(bool isDebug = false)
-	{
-		s_loggerFactory ??= Microsoft.Extensions.Logging
-			.LoggerFactory.Create(builder => {
-				builder.AddConsole(); // Adds the console logger
-				if (isDebug) builder.SetMinimumLevel(LogLevel.Debug);
-			});
-		return s_loggerFactory.CreateLogger<T>();
-	}
+	/// <summary>
+	/// Creates a logger categorised as <typeparamref name="T"/> from the configured factory.
+	/// </summary>
+	/// <typeparam name="T">Type whose full name becomes the log category.</typeparam>
+	/// <returns>A logger writing to the configured providers, or a no-op logger before <see cref="Configure"/> is called.</returns>
+	public static ILogger<T> CreateLogger<T>() => s_loggerFactory.CreateLogger<T>();
 }

@@ -1,5 +1,6 @@
 ﻿using DagNode.NDF.Interoperability.Model;
 using DagNode.NDF.Interoperability.Model.Bash;
+using Microsoft.Extensions.Logging;
 
 namespace DagNode.NDF.Interoperability.Bash.ConsoleApp;
 
@@ -8,7 +9,16 @@ class Program
 	static async Task Main(string[] args)
 	{
 		//var d = InlineScripts.InlineAll();
-		
+
+		// The library logs through Microsoft.Extensions.Logging.Abstractions and defaults to a
+		// no-op logger. Hand it a console factory so BashScript output reaches the terminal.
+		// Debug level surfaces the per-function call trace; drop to Information to silence it.
+		using ILoggerFactory loggerFactory = LoggerFactory.Create(builder => {
+			builder.AddConsole();
+			builder.SetMinimumLevel(LogLevel.Debug);
+		});
+		LoggingFactory.Configure(loggerFactory);
+
 		Console.WriteLine("DagNode.NDF.Interoperability.Core: Started checking Bash function calls");
 		Console.WriteLine("----------------------------------------------------------------");
 

@@ -1,5 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.Text;
+﻿using System.Text;
 using Microsoft.Extensions.Logging;
 using DagNode.NDF.Interoperability.Model;
 

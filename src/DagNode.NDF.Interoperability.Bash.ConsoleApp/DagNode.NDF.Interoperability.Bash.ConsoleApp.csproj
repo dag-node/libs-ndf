@@ -13,6 +13,11 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <!-- The library depends on the logging abstractions only; the app picks the provider. -->
+      <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
       <ProjectReference Include="..\DagNode.NDF.Interoperability.Core\DagNode.NDF.Interoperability.Core.csproj" />
     </ItemGroup>
 

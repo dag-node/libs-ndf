@@ -33,6 +33,9 @@ riderModule.iml
 # Visual Studio Code
 .vscode/
 
+# Work in progress: code parked outside any project, not built and not published
+wip/
+
 # Logs and diagnostics
 *.binlog
 msbuild.log

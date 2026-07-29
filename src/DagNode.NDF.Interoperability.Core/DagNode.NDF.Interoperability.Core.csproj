@@ -18,19 +18,6 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <Compile Remove="FileWatcher\SimpleFileWatcher.cs" />
-      <Compile Remove="FileWatcher\TailFileWatcher.cs" />
-      <Compile Remove="FileWatcher\TailFileWatcherManager.cs" />
-      <Compile Remove="FileWatcher\LogFileWatcherManager.cs" />
-      <Compile Remove="FileWatcher\LogFileSystemWatcher.cs" />
-      <Compile Remove="Utils\InMemoryFileSystem.cs" />
-      <Compile Remove="Extensions\ProcessExtensionsWithStreamsWip.cs" />
-      <Compile Remove="Model\Bash\FunctionResultLogLocation.cs" />
-      <Compile Remove="Model\Bash\FunctionResultOutLocation.cs" />
-      <Compile Remove="Model\Bash\FunctionResultErrLocation.cs" />
-    </ItemGroup>
-
-    <ItemGroup>
       <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
     </ItemGroup>
 

@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Central package management for the test projects. NuGet resolves the nearest
+    Directory.Packages.props walking up from a project, so this file governs tests/ alone and
+    the packages under src/ keep their own versions. A framework upgrade is one edit here.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="MSTest" Version="3.10.4" />
+  </ItemGroup>
+
+</Project>

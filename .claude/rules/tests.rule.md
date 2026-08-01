@@ -12,9 +12,13 @@ the settings shared by every test project — `net10.0`, `IsPackable=false`,
 `tests/Directory.Packages.props` centralises test package versions, so a framework upgrade
 is one edit.
 
-Test projects run identically from `dotnet test` on the command line, the Rider test
-explorer on RHEL 9+, and the Visual Studio 2026 test explorer on Windows. Every project
-therefore targets `net10.0` alone and depends only on packages available on both platforms.
+The stack is MSTest on
+[Microsoft.Testing.Platform](https://learn.microsoft.com/dotnet/core/testing/microsoft-testing-platform-intro):
+`EnableMSTestRunner` builds each project as its own test application that runs the tests in
+its own process. The Rider test explorer on RHEL 9+, the Visual Studio 2026 test explorer on
+Windows, and `dotnet test` all drive it, and `dotnet exec <project>.dll` runs a built suite
+with nothing but the shared host. Every project targets `net10.0` alone and depends only on
+packages available on both platforms.
 
 ## Naming and layout
 
@@ -24,6 +28,7 @@ One project per library × category:
 tests/
   Directory.Build.props
   Directory.Packages.props
+  TestSupport/                                     # helpers compiled into each project
   DagNode.NDF.Interoperability.Core.UnitTests/
   DagNode.NDF.Interoperability.Core.IntegrationTests/
   DagNode.NDF.Interoperability.Core.BoundaryTests/
@@ -34,9 +39,13 @@ project name identifies both the subject and the category and each category runs
 by project path. Within a project, the file layout mirrors the subject's: a test for
 `Bash/GlobalScripts.cs` lives in `Bash/GlobalScriptsTests.cs`.
 
-Separate projects are what make a category runnable alone without a filter expression;
-`[Trait("Category", …)]` on a fixture narrows further within a project and is what the IDE
-explorers group by.
+Separate projects are what make a category runnable alone without a filter expression, and
+what the IDE explorers group by. `[TestCategory]` narrows further within a project.
+
+`tests/TestSupport/*.cs` holds the helpers shared across categories — the bash host, the
+temporary directory, the corpus — and each project compiles them in through a `<Compile
+Include="../TestSupport/*.cs" />` item rather than referencing a project of their own, so a
+helper needs no packaging decision.
 
 ## Categories
 
@@ -52,9 +61,9 @@ explorers group by.
   injection, bodies containing every construct the transport claims to carry. Requires
   `bash` and Linux.
 
-A test that requires `bash` declares that requirement and is skipped, not failed, where the
-requirement is absent, so the Windows and Linux runs are both green and the skip reason
-names what is missing.
+A test that requires `bash` calls `BashRequirement.SkipUnlessAvailable()` from its
+`[TestInitialize]`, so it reports inconclusive rather than failing where bash is absent: the
+Windows and Linux runs are both green and the reason names what is missing.
 
 ## Hermeticity contract
 
@@ -112,17 +121,24 @@ protocol instead of silently agreeing with itself.
   writes those traps into a `bash` sharing the runner's process group terminates the runner
   and truncates the run. Give that subject its own process group, or assert the generated
   text instead of executing it.
-- **`dotnet test` runs single-node under the agent sandbox.** `/dev/shm` is not writable to
-  the agent account, so a multi-node solution-level MSBuild invocation hangs without output.
-  Pass `-m:1`. This constrains the agent's runs only; an operator's runs are unaffected.
+- **The agent runs a suite with `dotnet exec`, not `dotnet test`.** The IPC `dotnet test`
+  uses to report results back to MSBuild does not connect under the sandbox, so a run is
+  `dotnet exec <project>/bin/Debug/net10.0/<project>.dll` after a `-m:1` build. An
+  operator's `dotnet test` and the IDE explorers are unaffected. The sandbox's module groups
+  are described in the root `CLAUDE.md`.
+- **The runner needs no native apphost**, which is what keeps the suite runnable by an
+  account without the `apphost` group and why it is on MSTest: xunit.v3 requires an apphost,
+  and a VSTest-hosted runner requires the test-host IPC the sandbox denies. In-process
+  Microsoft.Testing.Platform needs neither.
 - **Bodies round-trip only through the base64 transport.** The deprecated inlining members
   throw on constructs they cannot preserve, so a test that expects a here-doc or a `case`
   statement to survive is asserting against the base64 path, not the inlining path.
 
 ## Deferred
 
-- The test projects themselves. This rule fixes the layout and the contract; the projects
-  under `tests/` are created against it.
+- Coverage of the consumer-facing pipeline — `BashScript`, `FunctionDirect`,
+  `FunctionProcessor`, and the work-directory layout — which the current suite reaches only
+  as far as the sourcing transport and the marker parser.
 - Property-based coverage of the transport — arbitrary bodies asserted byte-exact through a
   real `bash` — extending the worked example from a fixed corpus to generated input.
 - A coverage gate. Collection runs per category before a threshold is enforced, so the

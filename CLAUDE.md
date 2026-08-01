@@ -39,6 +39,9 @@ by its own header stays uncovered.
 
 ## Repository layout
 
+- `Directory.Build.props` — repository-wide build settings, imported explicitly by the
+  `src/` and `tests/` props files. MSBuild stops at the nearest `Directory.Build.props`
+  walking up from a project, so this file reaches a project only through that import.
 - `src/<PackageId>/` — one project per NuGet package. `src/Directory.Build.props` carries
   the shared package metadata, licensing, analyzer, and documentation settings; each
   `.csproj` sets only `PackageId`, `Version`, `Description`, and `PackageTags`.
@@ -134,14 +137,31 @@ the main bash process does not leak background subprocesses.
 ```bash
 dotnet restore -m:1
 dotnet build --no-restore -c Release -m:1
+dotnet exec tests/<project>/bin/Debug/net10.0/<project>.dll   # see the tests rule
 ```
 
-`-m:1` keeps MSBuild in a single node. Under the agent sandbox `/dev/shm` is not writable,
-so a multi-node solution-level restore or build produces no output and hangs until it is
-killed; per-project operations are unaffected. Building as the agent also cannot generate a
-native apphost (`-p:UseAppHost=false` skips it) and cannot rewrite `obj/` artifacts owned by
-another account.
+Development runs under the
+[tools-agent-tools-restricted](https://github.com/dag-node/tools-agent-tools-restricted)
+sandbox, which confines the agent account with SELinux. Two loadable dotnet module groups,
+`tmpmap` and `apphost`, govern what a build can do, each administered with
+`ai-tools-admin selinux enable-group <group>`:
 
-Host-level remedies for those limits — SELinux policy, file ownership, group membership —
-are the operator's to apply. Report the blocker and the command that reproduces it rather
-than changing the host.
+- **`tmpmap`**
+  ([policy](https://github.com/dag-node/tools-agent-tools-restricted/blob/develop/selinux/policy/ai_tools_tmpmap.te))
+  carries the on-disk temporary-file mapping MSBuild needs. Building this repository depends
+  on it; without it a solution-level `dotnet restore` or `dotnet build` produces no output
+  and hangs until it is killed. Solution-level MSBuild runs single-node, `-m:1`.
+- **`apphost`** carries the in-memory execution a project needs where its output is a native
+  host — a console app, a single-file publish, an out-of-process test host. The test projects
+  set `UseAppHost=false` and run through `dotnet exec`, so the suite builds and runs without
+  it, and `-p:UseAppHost=false` covers the console app the same way.
+
+The two groups cover disjoint operations and neither implies the other. Enabling either is
+the operator's call. Report the blocker and the command that reproduces it rather than
+changing host policy.
+
+An `obj/` tree written by another account is not rewritable, so an incremental build over an
+operator's artifacts fails on the up-to-date marker (MSB3374), and assets naming a package
+cache the agent cannot read fail the compile (CS0006). `dotnet restore -m:1` rewrites those
+assets against the agent's own cache, which is resolved from the environment and named
+nowhere in this repository.

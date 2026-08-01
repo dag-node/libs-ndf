@@ -19,13 +19,21 @@ jobs:
         with:
           fetch-depth: 0   # full history for SourceLink / deterministic builds
 
+      # 8.0 is the oldest runtime the console app targets; 10.0 builds its other target
+      # framework and the test projects.
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
-      - run: dotnet restore
+      # Locked mode fails where packages.lock.json and the project graph disagree, so a
+      # dependency change reaches CI as a lock file change rather than a silent upgrade.
+      - run: dotnet restore --locked-mode
 
       - run: dotnet build --no-restore -c Release
+
+      - run: dotnet test --no-build -c Release
 
       - name: Pack (validates packable projects)
         run: dotnet pack --no-build -c Release -o artifacts

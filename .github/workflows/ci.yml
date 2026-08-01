@@ -33,7 +33,18 @@ jobs:
 
       - run: dotnet build --no-restore -c Release
 
-      - run: dotnet test --no-build -c Release
+      # Unit tests carry no platform requirement and run wherever the job runs.
+      - name: Test (unit)
+        run: dotnet test tests/DagNode.NDF.Interoperability.Core.UnitTests --no-build -c Release
+
+      # Integration and boundary tests drive a real bash. On a runner without one they would
+      # report inconclusive — green while covering nothing — so the job asserts the platform
+      # instead of relying on the skip.
+      - name: Test (integration and boundary)
+        if: runner.os == 'Linux'
+        run: |
+          dotnet test tests/DagNode.NDF.Interoperability.Core.IntegrationTests --no-build -c Release
+          dotnet test tests/DagNode.NDF.Interoperability.Core.BoundaryTests --no-build -c Release
 
       - name: Pack (validates packable projects)
         run: dotnet pack --no-build -c Release -o artifacts

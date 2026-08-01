@@ -37,7 +37,16 @@ jobs:
 
       - run: dotnet build --no-restore -c Release
 
-      - run: dotnet test --no-build -c Release
+      - name: Test (unit)
+        run: dotnet test tests/DagNode.NDF.Interoperability.Core.UnitTests --no-build -c Release
+
+      # The bash-dependent categories report inconclusive without a real bash, so the release
+      # asserts the platform rather than publishing on a run that covered nothing.
+      - name: Test (integration and boundary)
+        if: runner.os == 'Linux'
+        run: |
+          dotnet test tests/DagNode.NDF.Interoperability.Core.IntegrationTests --no-build -c Release
+          dotnet test tests/DagNode.NDF.Interoperability.Core.BoundaryTests --no-build -c Release
 
       - name: Pack all packable projects
         run: dotnet pack --no-build -c Release -o artifacts

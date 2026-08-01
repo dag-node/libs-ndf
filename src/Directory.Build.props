@@ -1,5 +1,7 @@
 <Project>
 
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
   <!--
     Shared metadata and build settings for every DagNode.NDF.* package in this
     repository. Per-project .csproj files set only PackageId, Version,

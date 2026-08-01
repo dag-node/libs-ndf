@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    Repository-wide build settings. Imported explicitly by src/Directory.Build.props and
+    tests/Directory.Build.props: MSBuild stops at the nearest Directory.Build.props walking
+    up from a project, so a file at this level reaches a project only through that import.
+  -->
+
+  <PropertyGroup>
+    <NdfRepositoryRoot>$(MSBuildThisFileDirectory)</NdfRepositoryRoot>
+  </PropertyGroup>
+
+  <!--
+    .editorconfig at the repository root sets root = true, so any .editorconfig above it
+    contributes no settings. The compiler is still handed every .editorconfig found up the
+    directory tree and opens each one, which fails with CS1504 where the account running the
+    build has no access above the repository. Dropping them leaves the effective editor
+    configuration unchanged and keeps the build readable to a restricted account.
+  -->
+  <Target Name="DropEditorConfigFilesAboveRepositoryRoot" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <EditorConfigFiles Remove="@(EditorConfigFiles)"
+                         Condition="!$([System.String]::Copy('%(FullPath)').StartsWith('$(NdfRepositoryRoot)'))" />
+    </ItemGroup>
+  </Target>
+
+</Project>

@@ -1,10 +1,15 @@
 ﻿using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
 using DagNode.NDF.Interoperability.Model;
 
 namespace DagNode.NDF.Interoperability.Bash;
 
 public static class GlobalScripts
 {
+	// Declared first: the SOURCE_FUNCTION_* initializers below run in declaration order and read it
+	private static readonly Regex s_bashIdentifierRegex = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+
 	// Prevent resource leaks from subprocesses when terminating main bash process
 	//private static readonly string INLINE_FUNCTION___global__on_stop=$$"""function {{FUNCTION_NAME___global__on_stop}}() { trap - SIGINT SIGTERM SIGHUP EXIT; echo \"___END_PROCESS__ \$\$ by \$1\"; kill -s SIGINT -- -\$(ps -o pgid= -p \$\$) 2>/dev/null && sleep 2; pgrep -g \$\$ >/dev/null 2>&1 && kill -s SIGKILL -- -\$(ps -o pgid= -p \$\$) 2>/dev/null; }""";
 	private const string FUNCTION_NAME___global__on_stop = "___global__on_stop";
@@ -63,15 +68,39 @@ public static class GlobalScripts
 			FUNCTION_NAME___run_function__with__stdout_end_marker__async,
 			FUNCTION___run_function__with__stdout_end_marker__async);
 	
-	//public static string ValidateAndSourceInlineFunctionWithSourcingResult(string functionName, string inlineFunction) => $$"""{{functionName}}=$(echo -e "{{inlineFunction}}") echo -e "${{{functionName}}}" > /dev/null || { echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.ERROR_IN_FUNCTION}}"; exit 1; }; source <(echo -e "${{{functionName}}}") && echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.SOURCED_SUCCESSFULLY}}" || echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.SOURCING_FAILED}}" 2> /dev/null""";
+	/// <summary>
+	/// Builds the single line of bash that defines <paramref name="functionName"/> in the running process
+	/// and reports the outcome as a <see cref="FunctionParser.SOURCING_END_MARKER"/> line on stdout.
+	/// Carries <paramref name="functionCode"/> base64-encoded, so the body reaches bash byte-exact.
+	/// </summary>
+	/// <param name="functionName">Bash identifier the sourced code must define; allowlisted to <c>[A-Za-z_][A-Za-z0-9_]*</c>.</param>
+	/// <param name="functionCode">Function definition, verbatim. Any bash construct is permitted, including here-docs, <c>case</c> and backslash escapes.</param>
+	/// <returns>One line of bash, safe to write to the bash process stdin.</returns>
+	/// <exception cref="ArgumentException">When <paramref name="functionName"/> is not a bash identifier.</exception>
 	public static string ValidateAndSourceInlineFunctionWithSourcingResult(string functionName, string functionCode)
 	{
-		string inlineFunction = LinuxUtils.InlineAndEscapeBashScript(functionCode);
+		// Transport is base64 rather than LinuxUtils.InlineAndEscapeBashScript. Inlining costs two lossy
+		// passes over the body: flattening to one line cannot express here-docs, `case ... ;;` or any line
+		// ending in an operator, and `echo -e` rewrites \t, \0nnn, \x and \\ in the data on the way in.
+		// The base64 alphabet holds no shell metacharacters, so a single-quoted payload needs no escaping
+		// and arrives byte-exact on the one line the stdin protocol allows.
+		if (!s_bashIdentifierRegex.IsMatch(functionName))
+			throw new ArgumentException($"Not a bash identifier: '{functionName}'", nameof(functionName));
+		string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(functionCode.Replace("\r\n", "\n")));
+		string srcVar = $"__ndf_src_{functionName}";
+		// Decoding once and gating that variable makes `bash -n` validate exactly the bytes `source` runs.
+		// `declare -F` holds sourcing to its postcondition: `source` also succeeds on an empty payload.
 		return $$"""
-			  {{functionName}}=$(echo -e "{{inlineFunction}}"); echo -e "${{{functionName}}}" > /dev/null || { echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.ERROR_IN_FUNCTION}}"; exit 1; }; source <(echo -e "${{{functionName}}}") && echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.SOURCED_SUCCESSFULLY}}" || echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.SOURCING_FAILED}}"
+			  {{srcVar}}="$(base64 -d <<< '{{payload}}')" && bash -n <<< "${{srcVar}}" 2>/dev/null || { echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.ERROR_IN_FUNCTION}}"; exit 1; }; source <(printf '%s\n' "${{srcVar}}") && declare -F {{functionName}} >/dev/null && echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.SOURCED_SUCCESSFULLY}}" || echo "{{FunctionParser.SOURCING_END_MARKER}} {{functionName}} {{FunctionParser.SOURCING_FAILED}}"; unset {{srcVar}}
 			  """; // not suppressing source ... 2>/dev/null
 	}
 
+	#region Deprecated inlining
+
+	/// <summary>
+	/// Renders the shipped <c>Scripts/*.sh</c> function files as escaped one-liners, keyed by function name.
+	/// </summary>
+	[Obsolete("Sourcing carries function bodies as base64; see ValidateAndSourceInlineFunctionWithSourcingResult. Retained as a codegen aid for hand-written one-liners.")]
 	public static Dictionary<string, string> InlineAll()
 	{
 		var r = new Dictionary<string, string>();
@@ -82,6 +111,13 @@ public static class GlobalScripts
 		return r;
 	}
 	
+	/// <summary>
+	/// Reads the bash script at <paramref name="scriptFilePath"/> as an escaped one-liner with
+	/// <paramref name="functionName"/> replaced by its raw-string interpolation hole, ready to paste into a
+	/// <c>$$"""..."""</c> literal. Throws when the script uses constructs inlining cannot preserve.
+	/// </summary>
+	/// <exception cref="ArgumentException">When the script cannot be inlined without corrupting it.</exception>
+	[Obsolete("Sourcing carries function bodies as base64; see ValidateAndSourceInlineFunctionWithSourcingResult. Retained as a codegen aid for hand-written one-liners.")]
 	public static string ConvertBashScriptToInline(AbsolutePath scriptFilePath, string functionName)
 	{
 		using var sr = new StreamReader(scriptFilePath);
@@ -89,4 +125,6 @@ public static class GlobalScripts
 		string functionInlined = LinuxUtils.InlineAndEscapeBashScript(functionContents);
 		return functionInlined.Replace(functionName, $"{{{{{{{{{{{{{functionName}}}}}}}}}}}}}");
 	}
+
+	#endregion Deprecated inlining
 }

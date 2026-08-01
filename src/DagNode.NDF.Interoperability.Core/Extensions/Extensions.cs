@@ -246,7 +246,7 @@ public static class Extensions
 
 	private static bool IsControlCharacter(char c) =>
 		c <= '\u001F'                            // C0 controls: NUL..US, includes tab, LF, CR and ESC
-		|| (c >= '\u007F' && c <= '\u009F')      // DEL and the C1 controls, which include U+0085 NEL
+		|| c is >= '\u007F' and <= '\u009F'      // DEL and the C1 controls, which include U+0085 NEL
 		|| c == '\u2028' || c == '\u2029';       // LINE SEPARATOR, PARAGRAPH SEPARATOR
 
 	/// <summary>

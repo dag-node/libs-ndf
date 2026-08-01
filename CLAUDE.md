@@ -131,6 +131,12 @@ the main bash process does not leak background subprocesses.
   summaries and the `reference-docs` skill for file headers and this file.
 - **Analyzers** — `EnableNETAnalyzers` is set explicitly, since the SDK enables it by
   default only for `net5.0`+ targets. A build that reports zero warnings is the baseline.
+- **Commits** — [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), one
+  concern per commit, with a version bump as its own `chore(release):` commit. Package
+  versions come from each `.csproj` `<Version>`, which the release workflow reads. Use the
+  `commit-messages` skill.
+- **Dependencies** — each project carries a `packages.lock.json`, so a dependency change and
+  its lock file land in one diff and a restore in locked mode reproduces the graph.
 
 ## Building
 

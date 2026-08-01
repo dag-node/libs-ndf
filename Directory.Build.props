@@ -11,6 +11,15 @@
   </PropertyGroup>
 
   <!--
+    Every project keeps a packages.lock.json beside it, so a restore in locked mode resolves
+    the exact graph the lock file records and fails where the two disagree. A dependency
+    change is a lock file change, visible in the same diff.
+  -->
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <!--
     .editorconfig at the repository root sets root = true, so any .editorconfig above it
     contributes no settings. The compiler is still handed every .editorconfig found up the
     directory tree and opens each one, which fails with CS1504 where the account running the

@@ -11,7 +11,7 @@
     <!-- Package identity. Shared metadata lives in ../Directory.Build.props. -->
     <PropertyGroup>
         <PackageId>DagNode.NDF.Interoperability.Core</PackageId>
-        <Version>0.8.3</Version>
+        <Version>0.9.0</Version>
         <Description>Run and orchestrate Bash scripts and shell functions from .NET. Discovers shell functions, marshals arguments, and captures stdout, stderr, and exit codes, with asynchronous execution over FIFOs and PIDs on Linux.</Description>
         <PackageTags>bash;shell;interop;linux;process;automation;scripting;dotnet</PackageTags>
     </PropertyGroup>

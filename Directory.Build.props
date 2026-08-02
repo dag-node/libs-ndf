@@ -17,6 +17,14 @@
   -->
   <PropertyGroup>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!--
+      Restore reports a known vulnerability in any package in the graph, direct or
+      transitive, so a published advisory surfaces at build time rather than through a
+      version bump nobody had a reason to make.
+    -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
   </PropertyGroup>
 
   <!--

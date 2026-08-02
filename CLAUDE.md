@@ -136,7 +136,14 @@ the main bash process does not leak background subprocesses.
   versions come from each `.csproj` `<Version>`, which the release workflow reads. Use the
   `commit-messages` skill.
 - **Dependencies** — each project carries a `packages.lock.json`, so a dependency change and
-  its lock file land in one diff and a restore in locked mode reproduces the graph.
+  its lock file land in one diff and a restore in locked mode reproduces the graph. A
+  `PackageReference` version is a *floor*: NuGet resolves the lowest compatible version, so
+  the floor stays where it is and rises for a security advisory or an API the code needs,
+  not to track a release. Restore audits the whole graph and reports a known vulnerability
+  at build time, which is what surfaces a fix worth taking.
+- **SDK** — `global.json` pins the lowest SDK the build is known to work with and rolls
+  forward to any newer feature band, so a machine on a distribution-paced SDK and a runner on
+  the newest one both build. The pin moves when the lowest supported toolchain moves.
 
 ## Building
 

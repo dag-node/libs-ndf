@@ -93,8 +93,9 @@ public class FunctionParser
 	private const int END_SOURCE_FN_MARKER_LENGTH = 18;
 	
 	public static string? ReadSourcingResultAsync(string sourcingResultLine) {
-		// {FunctionParser.SOURCING_END_MARKER} {FunctionParser.SOURCED_SUCCESSFULLY} {functionName}
-		// {FunctionParser.SOURCING_END_MARKER} {FunctionParser.SOURCED_SUCCESSFULLY} {scriptFilePath}
+		// {SOURCING_END_MARKER} {functionName} {SOURCED_SUCCESSFULLY}
+		// {SOURCING_END_MARKER} {scriptFilePath} {SOURCED_SUCCESSFULLY}
+		// The sourced object is whatever lies between the two, so a path holding spaces still parses.
 		// Skip non ___END_SOURCE_FN__ lines 1.
 		if (string.IsNullOrWhiteSpace(sourcingResultLine) ||
 		    sourcingResultLine.Length < MIN_END_SOURCE_FN_LINE_LENGTH) return null;
@@ -108,10 +109,11 @@ public class FunctionParser
 		bool hasFunctionEndMarker = SOURCING_END_MARKER == endFnMarkerSpan.ToString();
 		if (!hasFunctionEndMarker) return null;
 		
-		var split = sourcingResultLine.Split(' ');
-		if (split.Length != 3) throw new InteroperabilityException($"Invalid sourcing result line: {sourcingResultLine}");
-		var sourcedObject = split[1];
-		var sourcingResult = split[2];
+		int resultStart = sourcingResultLine.LastIndexOf(' ') + 1;
+		int objectStart = END_SOURCE_FN_MARKER_LENGTH + 1;
+		if (resultStart <= objectStart) throw new InteroperabilityException($"Invalid sourcing result line: {sourcingResultLine}");
+		var sourcedObject = sourcingResultLine.Substring(objectStart, resultStart - 1 - objectStart);
+		var sourcingResult = sourcingResultLine.Substring(resultStart);
 		string message = $"{sourcingResult}: '{sourcedObject}'";
 		if (sourcingResult != FunctionParser.SOURCED_SUCCESSFULLY) throw new InteroperabilityException(message);
 		return message;

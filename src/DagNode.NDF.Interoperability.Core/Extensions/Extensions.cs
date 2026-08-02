@@ -128,14 +128,19 @@ public static class Extensions
 
 	/// <summary>
 	/// Replaces a mix of consecutive semicolons or whitespace with a single semicolon wrapped in spaces.
+	/// Terminates every line, so the caller must reject lines that cannot take a trailing <c>;</c>.
 	/// </summary>
+	[Obsolete("Bash script inlining is deprecated, see LinuxUtils.InlineAndEscapeBashScript.")]
 	public static string AddInlineSemicolons(this string input)
 	{
 		var sb = new StringBuilder(input.Length);
 		foreach (var line in input.SplitToLines()) {
 			var trimmedLine = line.TrimEnd();
+			if (trimmedLine.Length == 0) continue;
 			var lastLineChar = trimmedLine[^1];
-			if (lastLineChar is '{' or '}') {
+			// Only `{` rejects a following `;`. A trailing `}` takes one, and skipping it there would swallow
+			// the separator after a line that merely ends in an expansion such as `local p=${1#/tmp/}`.
+			if (lastLineChar is '{') {
 				sb.Append(trimmedLine).Append(' ');
 			} else {
 				var withoutSemicolons = trimmedLine.TrimEnd(';', ' ');
@@ -158,8 +163,10 @@ public static class Extensions
 
 	/// <summary>
 	/// Remove lines with only whitespace and a comment or everything after '#' on each line.
-	/// Also removes whitespace only lines.
+	/// Also removes whitespace only lines. Treats every '#' as a comment, including the ones bash reads as
+	/// data in <c>${v#p}</c>, <c>$#</c> and <c>"a#b"</c>.
 	/// </summary>
+	[Obsolete("Strips '#' that bash reads as data; LinuxUtils inlining uses a quote-aware pass instead.")]
 	public static string RemoveBashComments(this string input)
 	{
 		var lines = input.SplitToLines();
@@ -197,6 +204,7 @@ public static class Extensions
 	/// Concatenates Bash multiline continuation lines (those ending with \)
 	/// by replacing \ and a new line character with a single space.  
 	/// </summary>
+	[Obsolete("Bash script inlining is deprecated, see LinuxUtils.InlineAndEscapeBashScript.")]
 	public static string ConcatenateBashMultilineContinuations(this string input) =>
 		s_concatenateBashMultilineCommandsRegex.Replace(input, " ");
 	// Line continuation backslash has to be the very last character before the end of line character
@@ -238,7 +246,7 @@ public static class Extensions
 
 	private static bool IsControlCharacter(char c) =>
 		c <= '\u001F'                            // C0 controls: NUL..US, includes tab, LF, CR and ESC
-		|| (c >= '\u007F' && c <= '\u009F')      // DEL and the C1 controls, which include U+0085 NEL
+		|| c is >= '\u007F' and <= '\u009F'      // DEL and the C1 controls, which include U+0085 NEL
 		|| c == '\u2028' || c == '\u2029';       // LINE SEPARATOR, PARAGRAPH SEPARATOR
 
 	/// <summary>

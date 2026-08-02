@@ -1,0 +1,46 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    Settings shared by every test project. This file sits outside the scope of
+    src/Directory.Build.props, so nothing here inherits package metadata and no test project
+    is publishable.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <!--
+    Microsoft.Testing.Platform runs the tests in the test process itself. The Rider and Visual
+    Studio explorers drive it directly, and a command-line run needs no separate test host, so a
+    suite stays runnable by an account confined to its own processes.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <!--
+      The runner is launched through `dotnet test` or `dotnet exec`, both of which use the shared
+      host, so the native apphost is redundant. Skipping it keeps the test projects buildable by
+      an account that cannot create one.
+    -->
+    <UseAppHost>false</UseAppHost>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+  </ItemGroup>
+
+</Project>

@@ -64,6 +64,10 @@ working directories and log layout.
 - .NET Standard 2.1 compatible runtime (`.NET`, or `.NET Framework` via the
   compatibility shim)
 - `bash` available on `PATH` (Linux)
+- The utilities the generated helpers call: `base64`, `date`, `mkdir` and `sleep`
+  (coreutils), and `ps` and `pgrep` (procps). A standard distribution has all of
+  them; a minimal container image may not. Function definitions travel into `bash`
+  base64-encoded, so `base64` is needed for any call at all.
 
 ## License
 

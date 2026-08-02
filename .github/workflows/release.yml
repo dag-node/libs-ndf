@@ -23,13 +23,30 @@ jobs:
         with:
           fetch-depth: 0   # full history for SourceLink / deterministic builds
 
+      # 8.0 is the oldest runtime the console app targets; 10.0 builds its other target
+      # framework and the test projects.
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
-      - run: dotnet restore
+      # Locked mode fails where packages.lock.json and the project graph disagree, so a
+      # release resolves the exact dependency graph the lock files record.
+      - run: dotnet restore --locked-mode
 
       - run: dotnet build --no-restore -c Release
+
+      - name: Test (unit)
+        run: dotnet test tests/DagNode.NDF.Interoperability.Core.UnitTests --no-build -c Release
+
+      # The bash-dependent categories report inconclusive without a real bash, so the release
+      # asserts the platform rather than publishing on a run that covered nothing.
+      - name: Test (integration and boundary)
+        if: runner.os == 'Linux'
+        run: |
+          dotnet test tests/DagNode.NDF.Interoperability.Core.IntegrationTests --no-build -c Release
+          dotnet test tests/DagNode.NDF.Interoperability.Core.BoundaryTests --no-build -c Release
 
       - name: Pack all packable projects
         run: dotnet pack --no-build -c Release -o artifacts

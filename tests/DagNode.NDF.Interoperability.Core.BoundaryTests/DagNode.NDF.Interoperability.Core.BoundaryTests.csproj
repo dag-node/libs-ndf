@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/DagNode.NDF.Interoperability.Core/DagNode.NDF.Interoperability.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Shared helpers, compiled in rather than carried by a project of their own. -->
+  <ItemGroup>
+    <Compile Include="../TestSupport/*.cs" LinkBase="TestSupport" />
+  </ItemGroup>
+
+</Project>

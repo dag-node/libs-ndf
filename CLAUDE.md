@@ -32,6 +32,7 @@ rather than documenting around it.
 | Rule | Domain |
 | --- | --- |
 | [authoring](.claude/rules/authoring.rule.md) | Conventions for the rule files in this directory. |
+| [shared-tree](.claude/rules/shared-tree.rule.md) | An operator and a confined agent building one .NET tree. |
 | [tests](.claude/rules/tests.rule.md) | Test project layout, categories, and the hermeticity contract. |
 
 Rules covering `src/` components are added as those domains appear; a file fully explained
@@ -148,33 +149,28 @@ the main bash process does not leak background subprocesses.
 ## Building
 
 ```bash
-dotnet restore -m:1
-dotnet build --no-restore -c Release -m:1
-dotnet exec tests/<project>/bin/Debug/net10.0/<project>.dll   # see the tests rule
+dotnet restore                       # first, whenever the other account built last
+dotnet build --no-restore -c Release
+dotnet test --no-build -c Release
 ```
+
+An operator and this agent build one tree, each with its own package cache, so **restore
+before building** rather than diagnosing what the other account left behind: assets naming a
+cache this account cannot read fail with `CS0006` or `NETSDK1064`, and a restore rewrites them
+in about a second. The first build after a restore reports stale errors and the next reports
+the real result. Build one at a time — MSBuild supports no concurrent build of one `obj/` tree
+by two accounts.
+
+Details, the full symptom table, and the substitutes to use where a sandbox policy group is
+absent: [shared-tree](.claude/rules/shared-tree.rule.md).
 
 Development runs under the
 [tools-agent-tools-restricted](https://github.com/dag-node/tools-agent-tools-restricted)
-sandbox, which confines the agent account with SELinux. Two loadable dotnet module groups,
-`tmpmap` and `apphost`, govern what a build can do, each administered with
-`ai-tools-admin selinux enable-group <group>`:
+sandbox, which confines the agent account with SELinux. With its `tmpmap`, `apphost` and
+`netcore` policy groups enabled, restore, build, test, publish and running the project's own
+executable all behave as they do for the operator, and none of the commands above needs a
+flag the operator does not use.
 
-- **`tmpmap`**
-  ([policy](https://github.com/dag-node/tools-agent-tools-restricted/blob/develop/selinux/policy/ai_tools_tmpmap.te))
-  carries the on-disk temporary-file mapping MSBuild needs. Building this repository depends
-  on it; without it a solution-level `dotnet restore` or `dotnet build` produces no output
-  and hangs until it is killed. Solution-level MSBuild runs single-node, `-m:1`.
-- **`apphost`** carries the in-memory execution a project needs where its output is a native
-  host — a console app, a single-file publish, an out-of-process test host. The test projects
-  set `UseAppHost=false` and run through `dotnet exec`, so the suite builds and runs without
-  it, and `-p:UseAppHost=false` covers the console app the same way.
+Enabling or relaxing a policy group is the operator's call. Report the blocker and the
+command that reproduces it rather than changing host policy.
 
-The two groups cover disjoint operations and neither implies the other. Enabling either is
-the operator's call. Report the blocker and the command that reproduces it rather than
-changing host policy.
-
-An `obj/` tree written by another account is not rewritable, so an incremental build over an
-operator's artifacts fails on the up-to-date marker (MSB3374), and assets naming a package
-cache the agent cannot read fail the compile (CS0006). `dotnet restore -m:1` rewrites those
-assets against the agent's own cache, which is resolved from the environment and named
-nowhere in this repository.

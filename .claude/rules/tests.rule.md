@@ -121,15 +121,13 @@ protocol instead of silently agreeing with itself.
   writes those traps into a `bash` sharing the runner's process group terminates the runner
   and truncates the run. Give that subject its own process group, or assert the generated
   text instead of executing it.
-- **The agent runs a suite with `dotnet exec`, not `dotnet test`.** The IPC `dotnet test`
-  uses to report results back to MSBuild does not connect under the sandbox, so a run is
-  `dotnet exec <project>/bin/Debug/net10.0/<project>.dll` after a `-m:1` build. An
-  operator's `dotnet test` and the IDE explorers are unaffected. The sandbox's module groups
-  are described in the root `CLAUDE.md`.
-- **The runner needs no native apphost**, which is what keeps the suite runnable by an
-  account without the `apphost` group and why it is on MSTest: xunit.v3 requires an apphost,
-  and a VSTest-hosted runner requires the test-host IPC the sandbox denies. In-process
-  Microsoft.Testing.Platform needs neither.
+- **The runner needs no native apphost and no test-host process.** In-process
+  Microsoft.Testing.Platform runs a suite from the test assembly itself, so
+  `dotnet exec <project>/bin/<configuration>/net10.0/<project>.dll` reports a full run with
+  no sandbox policy group enabled — the substitute to reach for where `dotnet test` cannot
+  report. xunit.v3 requires a native apphost and a VSTest-hosted runner requires its own test
+  host, either of which makes a suite depend on a policy group being enabled. See
+  [shared-tree](shared-tree.rule.md).
 - **Bodies round-trip only through the base64 transport.** The deprecated inlining members
   throw on constructs they cannot preserve, so a test that expects a here-doc or a `case`
   statement to survive is asserting against the base64 path, not the inlining path.

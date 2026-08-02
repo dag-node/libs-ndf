@@ -6,6 +6,9 @@
         <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <!-- Bash interop runs on Linux only, so pin the RID: AOT restore is then
+             deterministic across SDK feature bands instead of inferring the host's. -->
+        <RuntimeIdentifiers>linux-x64</RuntimeIdentifiers>
         <PublishAot>true</PublishAot>
         <InvariantGlobalization>true</InvariantGlobalization>
         <!-- Sample/host app: never published as a NuGet package. -->

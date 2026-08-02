@@ -131,6 +131,7 @@
         }
       }
     },
+    "net10.0/linux-x64": {},
     "net8.0": {
       "Microsoft.DotNet.ILCompiler": {
         "type": "Direct",
@@ -259,6 +260,22 @@
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "[8.0.0, )"
         }
+      }
+    },
+    "net8.0/linux-x64": {
+      "Microsoft.DotNet.ILCompiler": {
+        "type": "Direct",
+        "requested": "[8.0.29, )",
+        "resolved": "8.0.29",
+        "contentHash": "pJ9k0aa7xJCiukdnM7W6K6nNJchLpdBWkPnclDmunW1UPTD9cnWMWzEPQq0nqSLhoixR4xflE2VKslROxBlI5Q==",
+        "dependencies": {
+          "runtime.linux-x64.Microsoft.DotNet.ILCompiler": "8.0.29"
+        }
+      },
+      "runtime.linux-x64.Microsoft.DotNet.ILCompiler": {
+        "type": "Transitive",
+        "resolved": "8.0.29",
+        "contentHash": "/Q/Q2sgrUeMQCFSi3KmMZx4sr32+lTKZLVH1HmdIXFktAfc6RUEQNOWoXIyiDHmqLOs07wJYPcvgWbHCRW5Hyg=="
       }
     }
   }

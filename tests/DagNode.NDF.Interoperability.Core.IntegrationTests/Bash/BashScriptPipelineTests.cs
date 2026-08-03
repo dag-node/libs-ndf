@@ -7,19 +7,16 @@ namespace DagNode.NDF.Interoperability.Tests.Integration.Bash;
 /// <summary>
 /// The consumer-facing pipeline end to end: one script sourced into one resident bash, then typed
 /// function calls — scalars, collections, enums, booleans, args with spaces — parsed back into .NET,
-/// run sequentially and in parallel, plus the graceful-drain disposal contract.
+/// run sequentially and in parallel, plus the graceful-drain disposal contract. These are the first
+/// tests to drive <see cref="BashScript"/> end to end (the other integration tests use the raw
+/// <c>BashHost</c>).
 ///
-/// DISABLED — these are the first tests to drive <see cref="BashScript"/> end to end (the other
-/// integration tests use the raw <c>BashHost</c>). Diagnosis found the pipeline leaks a resource across
-/// create/dispose cycles: a single instance and its calls (including ~16 concurrent) run reliably, but
-/// after enough create/dispose cycles in one process a later instance's <em>startup</em> hangs. The
-/// v0.9.0 baseline breaks at the 2nd instance; the session/setsid + tree-kill teardown here raises the
-/// threshold to roughly ten but does not eliminate it. <see cref="ManyInstancesInOneProcessHang"/> is
-/// the reproduction. Kept (not deleted) as the executable record; re-enable once fixed. See the
-/// process-lifecycle rule.
+/// <see cref="ManyCreateDisposeCyclesStayStable"/> is the regression for the stdout-reader lifetime fix:
+/// binding the reader to the transient startup token once left a bash with no reader after a create/dispose
+/// cycle, so its first call hung. <see cref="UnexpectedBashExitFailsPendingCallInsteadOfHanging"/> covers
+/// the fail-fast path a crashed or resource-limited bash now takes instead of hanging its callers.
 /// </summary>
 [TestClass]
-[Ignore("Reproduces a pre-existing pipeline resource leak: after ~10 BashScript create/dispose cycles a later startup hangs. Re-enable when fixed.")]
 public class BashScriptPipelineTests
 {
 	private enum ProcessingState { Idle, Processing, Done }
@@ -27,7 +24,9 @@ public class BashScriptPipelineTests
 	[TestInitialize]
 	public void RequireBash() => BashRequirement.SkipUnlessAvailable();
 
-	// $1 is the per-call work directory; user args start at $2.
+	// $1 is the per-call work directory; user args start at $2. kill_bash SIGKILLs the resident bash's whole
+	// process group ($$ is the setsid-isolated group id, so this stays off the test runner), taking the call's
+	// own subshell with it so no result marker escapes — standing in for an OOM kill or a hit resource limit.
 	private const string Script =
 		"""
 		#!/usr/bin/bash
@@ -41,6 +40,7 @@ public class BashScriptPipelineTests
 		function get_state() { printf '  procESSing  \n'; }
 		function answer_yes() { echo yes; }
 		function slow_echo() { sleep "$2"; echo drained; }
+		function kill_bash() { kill -s KILL -- -$$; }
 		""";
 
 	private static async Task<BashScript> CreateAsync(TemporaryDirectory scripts)
@@ -124,14 +124,31 @@ public class BashScriptPipelineTests
 	}
 
 	[TestMethod]
-	public async Task ManyInstancesInOneProcessHang()
+	public async Task ManyCreateDisposeCyclesStayStable()
 	{
-		// Reproduction of the resource leak: a few create/dispose cycles pass, but by ~10 a later
-		// instance's startup hangs. Each instance is created, used once, and disposed before the next.
-		for (int i = 0; i < 10; i++) {
+		// Regression for the stdout-reader lifetime fix: each create/dispose cycle stands up a fresh bash
+		// with its own reader; the reader must not be bound to the startup token the sourcing path disposes
+		// on return, or a later cycle's bash is left unread and its first call hangs. Every cycle here both
+		// starts (sourcing markers must be read) and calls (a result marker must be read), so a lost reader
+		// surfaces as a hang the run's timeout catches. Bash/fd/thread counts stay flat across the loop.
+		for (int i = 0; i < 25; i++) {
 			using var scripts = new TemporaryDirectory($"api-seq-{i}");
 			await using var bash = await CreateAsync(scripts);
-			Assert.AreEqual(42, await bash.CallFunctionAsync<int>("get_int"));
+			Assert.AreEqual(42, await bash.CallFunctionAsync<int>("get_int"), $"cycle {i}");
 		}
+	}
+
+	[TestMethod]
+	public async Task UnexpectedBashExitFailsPendingCallInsteadOfHanging()
+	{
+		using var scripts = new TemporaryDirectory("api-crash");
+		await using var bash = await CreateAsync(scripts);
+
+		// kill_bash SIGKILLs the resident bash mid-call. The result can never arrive, so the call must fail
+		// with a meaningful error rather than wait forever; the timeout is a backstop that turns a
+		// regression (a hang) into a distinct, non-blocking failure.
+		var ex = await Assert.ThrowsExceptionAsync<InteroperabilityException>(
+			() => bash.CallFunctionAsync<string>("kill_bash", timeout: TimeSpan.FromSeconds(30)));
+		StringAssert.Contains(ex.Message, "exited unexpectedly");
 	}
 }

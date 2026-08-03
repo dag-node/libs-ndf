@@ -134,9 +134,9 @@ protocol instead of silently agreeing with itself.
 
 ## Deferred
 
-- Coverage of the consumer-facing pipeline — `BashScript`, `FunctionDirect`,
-  `FunctionProcessor`, and the work-directory layout — which the current suite reaches only
-  as far as the sourcing transport and the marker parser.
+- Coverage of `FunctionDirect` and the work-directory layout. `BashScriptPipelineTests` covers
+  `BashScript`/`FunctionProcessor` end to end (see [process-lifecycle](process-lifecycle.rule.md));
+  `FunctionDirect` and the on-disk `{prefix}` layout are not yet exercised directly.
 - Property-based coverage of the transport — arbitrary bodies asserted byte-exact through a
   real `bash` — extending the worked example from a fixed corpus to generated input.
 - A coverage gate. Collection runs per category before a threshold is enforced, so the

@@ -15,3 +15,10 @@ public class ReadErrorStreamEventArgs(StreamReader standardError, CancellationTo
 	public StreamReader StandardError { get; } = standardError;
 	public CancellationToken CancellationToken { get; } = ct;
 }
+
+/// <summary>Raised when the bash process exits without the library asking it to (crash, OOM kill, a hit
+/// resource limit). <see cref="ExitCode"/> is null when it could not be read.</summary>
+public class ProcessExitedEventArgs(int? exitCode) : EventArgs
+{
+	public int? ExitCode { get; } = exitCode;
+}

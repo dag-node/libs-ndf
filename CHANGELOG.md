@@ -5,6 +5,41 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this proje
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the major version is `0`, a
 breaking change raises the minor version.
 
+## [0.10.1] - 2026-08-03
+
+### Fixed
+
+- `BashScript` pipeline calls stay responsive across create/dispose cycles. The bash stdout and
+  stderr readers now run for the whole life of their process and stop only on disposal, so every
+  result marker is read and each call returns its result. Thread, file-descriptor, and child-process
+  counts stay flat across cycles.
+- A call now returns promptly with an `InteroperabilityException` naming the exit code when the
+  resident bash exits on its own — a crash, an OOM kill, or a hit resource limit — so the caller gets
+  a clear, immediate error and the session stays responsive.
+
+## [0.10.0] - 2026-08-03
+
+### Changed
+
+- **Breaking.** Public async methods take a `CancellationToken` rather than a
+  `CancellationTokenSource`; `BashScript.CreateAsync` and `FunctionDirect.GetBoolAsync` no longer
+  accept a source. A caller bounds startup and per-call waits without being able to tear down the
+  resident session, which the instance owns.
+- **Breaking.** The non-functional timeout overload is replaced by a working per-call timeout
+  alongside the cancellation token.
+- Concurrent calls on one instance no longer serialize on the reader thread: result waits complete
+  asynchronously.
+
+### Added
+
+- A real, configurable per-call timeout. A timeout or cancellation also terminates the bash
+  function's own process tree, not just the wait — each instance's bash runs in its own `setsid`
+  session and every call reports its PID, so `ProcessTree` reaps the subtree (`pidfd` where
+  available, else `/proc` + `kill(2)` with a start-time reuse guard) using no `pgrep`/`ps`/`kill`
+  binary, so a locked-down sandbox can still clean up.
+- `IAsyncDisposable` shutdown that drains in-flight calls before tearing the session down.
+- A caller-supplied result parser and split separator, and case-insensitive enum parsing.
+
 ## [0.9.0] - 2026-08-02
 
 ### Changed
@@ -87,6 +122,8 @@ First published release.
   `EventHandlerFunctionStartAsync` / `EventHandlerFunctionFinishedAsync` hooks for raw command
   and output access.
 
+[0.10.1]: https://github.com/dag-node/libs-ndf/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/dag-node/libs-ndf/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/dag-node/libs-ndf/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/dag-node/libs-ndf/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/dag-node/libs-ndf/compare/v0.8.0...v0.8.1

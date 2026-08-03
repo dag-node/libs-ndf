@@ -48,6 +48,32 @@ The decisions below are the non-obvious ones — the obvious mechanics live in e
   `TerminateFunctionProcessTreeOnTimeout` (see below). Instance disposal does **not** terminate
   per call — session teardown reaps everything.
 
+## Stream readers outlive startup
+
+`BashProcess` reads bash's stdout and stderr for the whole life of the process, on a background
+`Task.Run` launched by `StartBashAsync`. That task takes the process-scoped `_readerCts`, **not** the
+`CancellationTokenSource` the caller passes to `StartBashAsync`: that argument is a transient linked
+source the sourcing path (`FunctionProcessor.SourceScriptFilesAsync`) disposes as soon as it returns, and
+binding the readers to it races that disposal — the reader touches a disposed token, the fire-and-forget
+task faults, and the bash is left with no stdout reader, so every marker it emits (sourcing *and* call
+results) goes unparsed and the first call blocks forever. `_readerCts` is cancelled by `Dispose`, so the
+readers stop on teardown and never on a startup token's disposal.
+
+Each reader loops to EOF: `ReadLineAsync` returns null only when bash closes the pipe (it exited) or the
+stream is disposed on teardown, so the reader ends there rather than polling a closed pipe. A stream torn
+down mid-read surfaces as `IOException`/`ObjectDisposedException` and is treated as EOF; a
+parsing/handler fault still propagates to `WaitForExitAsync`.
+
+## Unexpected bash exit fails pending calls
+
+When the readers end while `_readerCts` is **not** cancelled, bash exited without the library asking it
+to — a crash, an OOM kill, a hit resource limit. `BashProcess` raises
+`EventHandlerProcessExitedUnexpectedlyAsync`; `FunctionProcessor.FailPendingCallsOnUnexpectedExit`
+`TrySetException`s every queued and running call's completion source with an `InteroperabilityException`
+naming the exit code. A caller awaiting a result the dead process can never deliver gets that exception
+instead of blocking — the meaningful error a system limit surfaces as. The fire-and-forget reader task
+logs its own faults rather than rethrowing into an unobserved task exception.
+
 ## Disposal: graceful vs forceful, and the order
 
 - `DisposeAsync` (graceful): drains in-flight calls first, bounded by
@@ -162,29 +188,11 @@ Implemented and green:
   the call's subshell and the grandchild are gone within grace + ε (the `/proc` subtree walk, not just
   the root), while the test host survives (setsid isolation, implicitly). Each subject runs in its own
   setsid session, per the `___global__on_stop` quirk.
-
-Blocked by the [known issue](#known-issue-open) and held in `[Ignore]`d `BashScriptPipelineTests`: the
-happy-path type conversions (scalars, collections, enum trim/case-insensitive, exit-code bool, args with
-spaces), the custom parser/separator, single-instance parallelism, and the disposal-drain contract.
-`ManyInstancesInOneProcessHang` is the reproduction. Re-enable when the leak is fixed.
-
-## Known issue (open)
-
-The pipeline leaks a resource across `BashScript` create/dispose cycles: after enough cycles in one
-process, a later instance's **startup** hangs (the log stops after the PID-dir check, in the
-tmpfs-mount / bash-start / sourcing path, and no result is delivered). `BashScriptPipelineTests` — the
-first tests to drive `BashScript` end to end rather than the raw `BashHost` — are kept as the executable
-record but `[Ignore]`d so the suite stays green; `ManyInstancesInOneProcessHang` is the reproduction.
-
-**Characterised (2026-08-03).** What is reliable, measured in isolation: a single instance's calls,
-including ~16 concurrent (5/5 runs); two sequential instances (5/5). What hangs: ten sequential
-create/dispose cycles in one process (consistently). So it is **not** a per-call data collision (per-call
-`{prefix}` files are unique by sequence number and per-instance random tag; two instances differ by that
-tag) and **not** simply "the second instance" — it is accumulation, pointing to a per-instance teardown
-leak (leaked bash/setsid/mount processes, reader/dispatch tasks, or file descriptors) that eventually
-blocks a new startup. **Pre-existing:** the `v0.9.0` baseline breaks at the *second* instance; the
-session/`setsid` + tree-kill teardown here raises the threshold to ~ten but does not remove the leak.
-`FunctionResultCompletionSource` is `RunContinuationsAsynchronously` (keeps a waiter's continuation off
-the reader thread — a real improvement, not the cure). Prime suspects: reader/dispatch tasks or the
-`setsid`/bash/mount processes not fully released on `Dispose`; `HandleError` calling `Dispose`
-synchronously from the stderr-reader thread. Re-enable the tests once fixed.
+- **Integration** — `BashScriptPipelineTests`: the consumer-facing pipeline end to end — type conversions
+  (scalars, collections, enum trim/case-insensitive, exit-code bool, args with spaces), the custom
+  parser/separator, single-instance ~16-way parallelism, and the disposal-drain contract.
+  `ManyCreateDisposeCyclesStayStable` drives 25 create/dispose cycles in one process, each of which both
+  sources (a sourcing marker must be read) and calls (a result marker must be read), so a reader bound to
+  a disposed startup token surfaces as a hang the run's timeout catches.
+  `UnexpectedBashExitFailsPendingCallInsteadOfHanging` SIGKILLs the resident bash's own (setsid-isolated)
+  process group mid-call and asserts the caller gets an `InteroperabilityException`, not a hang.

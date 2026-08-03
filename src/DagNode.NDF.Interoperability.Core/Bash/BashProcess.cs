@@ -17,6 +17,9 @@ public class BashProcess: IDisposable
 	public event AsyncTypedEventHandler<BashProcess, FunctionResultReadyEventArgs> EventHandlerFunctionResultReadyAsync = null!;
 	public event AsyncTypedEventHandler<BashProcess, ErrorStreamReceivedEventArgs> EventHandlerErrorStreamReceivedAsync = null!;
 	public event AsyncTypedEventHandler<BashProcess, FunctionPidReadyEventArgs> EventHandlerFunctionPidReadyAsync = null!;
+	/// <summary>Raised when bash exits without Dispose asking it to, so a subscriber can fail pending calls
+	/// instead of leaving their callers waiting on a result that can never arrive.</summary>
+	public event AsyncTypedEventHandler<BashProcess, ProcessExitedEventArgs> EventHandlerProcessExitedUnexpectedlyAsync = null!;
 	
 	#region Interlocked properties
 	public bool IsRunning { get => _IsRunning; }
@@ -39,6 +42,12 @@ public class BashProcess: IDisposable
 	#endregion Interlocked properties
 	
 	private readonly ILogger _logger;
+	// The stdout/stderr readers outlive any single startup call, so they run on this process-scoped source
+	// rather than the transient startup CancellationTokenSource a caller hands to StartBashAsync — that one
+	// is a short-lived linked source the sourcing path disposes as soon as it returns, and binding the
+	// readers to it races that disposal: the reader touches a disposed token, faults, and the bash is left
+	// with no stdout reader, so its markers are never parsed and the first call hangs. Cancelled by Dispose.
+	private readonly CancellationTokenSource _readerCts = new();
 
 	public async Task CreateAsync(ILogger? logger, BashProcessSettings bashBashProcessSettings)
 	{
@@ -69,17 +78,23 @@ public class BashProcess: IDisposable
 		} finally { _isRunningLock.Release(); }
 		_IsRunning = await _process.StartAsync(cts).ConfigureAwait(false);
 		if (_IsRunning && !cts.IsCancellationRequested) {
-			// Handle exit event automatically when it occurs
+			// Handle exit event automatically when it occurs. The readers run for the whole life of the bash
+			// process, so they take _readerCts (cancelled by Dispose), never the caller's transient startup
+			// cts which the sourcing path disposes on return.
 			var runBashProcess = Task.Run(async () => {
 				try {
 					EventHandlerReadOutputStreamAsync += ReadOutputStreamAsync; // Long running task
 					EventHandlerReadErrorStreamAsync += ReadErrorStreamAsync; // Long running task
-					await _process.WaitForExitAsync(cts,
+					await _process.WaitForExitAsync(_readerCts,
 						EventHandlerReadOutputStreamAsync,
 						EventHandlerReadErrorStreamAsync)
 							.ConfigureAwait(false);
 				} catch (Exception ex) {
-					throw new InteroperabilityException(ex, "Error running bash process");
+					// Fire-and-forget: log rather than rethrow into an unobserved task exception (a silent
+					// fault here is exactly what once left a dead reader undiagnosable).
+					_logger.LogError(ex, "Bash process reader loop terminated");
+				} finally {
+					await NotifyIfExitedUnexpectedlyAsync().ConfigureAwait(false);
 				}
 			}).ConfigureAwait(false);
 		} else {
@@ -181,50 +196,81 @@ public class BashProcess: IDisposable
 	#endregion SourceBashScriptAsync
 	#region Bash process stream handlers
 	
+	// Reads a redirected stream to EOF. ReadLineAsync returns null only when the far end closes — bash
+	// exited — or the stream is disposed on teardown, so the reader ends there instead of polling a closed
+	// pipe forever; that quiet exit is also what lets WaitForExitAsync observe an unexpected bash exit and
+	// fail pending calls rather than hang. A stream torn down mid-read surfaces as IO/ObjectDisposed and is
+	// treated as EOF; parsing/handler faults still propagate to WaitForExitAsync.
 	private async Task ReadOutputStreamAsync(Process sender, ReadOutputStreamEventArgs args)
 	{
 		while (!args.CancellationToken.IsCancellationRequested) {
-			while (await args.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line) {
-				// Parse source command results
-				var sourcingResult = FunctionParser.ReadSourcingResultAsync(line);
-				if (sourcingResult != null) {
-					_logger.LogDebug("{SourcingResult}", sourcingResult.ToLogLine());
-					continue;
-				}
-				// Parse per-call begin markers carrying the backgrounded call's PID
-				if (FunctionParser.TryParseFunctionBegin(line, out string beginMarkerTag, out int beginPid)) {
-					if (EventHandlerFunctionPidReadyAsync != null) {
-						await EventHandlerFunctionPidReadyAsync.Invoke(this, new FunctionPidReadyEventArgs(beginMarkerTag, beginPid)).ConfigureAwait(false);
-					}
-					continue;
-				}
-				// Parse call function results
-				if (!FunctionParser.TryParseFunctionResultMetadata(line, out FunctionResultMetadata? metadata) || metadata is null) {
-					// Log anything else
-					_logger.LogDebug("{ScriptOutputLine}", line.ToLogLine());
-					continue;
-				}
-				// Process function result
-				await EventHandlerFunctionResultReadyAsync.Invoke(this, new FunctionResultReadyEventArgs(metadata)).ConfigureAwait(false);
+			string? line;
+			try {
+				line = await args.StandardOutput.ReadLineAsync().ConfigureAwait(false);
+			} catch (Exception ex) when (ex is IOException or ObjectDisposedException) {
+				break;
 			}
-			await Task.Delay(TimeSpan.FromMilliseconds(10), args.CancellationToken).ConfigureAwait(false);
+			if (line is null) break; // EOF: bash's stdout closed, or the stream was disposed.
+			// Parse source command results
+			var sourcingResult = FunctionParser.ReadSourcingResultAsync(line);
+			if (sourcingResult != null) {
+				_logger.LogDebug("{SourcingResult}", sourcingResult.ToLogLine());
+				continue;
+			}
+			// Parse per-call begin markers carrying the backgrounded call's PID
+			if (FunctionParser.TryParseFunctionBegin(line, out string beginMarkerTag, out int beginPid)) {
+				if (EventHandlerFunctionPidReadyAsync != null) {
+					await EventHandlerFunctionPidReadyAsync.Invoke(this, new FunctionPidReadyEventArgs(beginMarkerTag, beginPid)).ConfigureAwait(false);
+				}
+				continue;
+			}
+			// Parse call function results
+			if (!FunctionParser.TryParseFunctionResultMetadata(line, out FunctionResultMetadata? metadata) || metadata is null) {
+				// Log anything else
+				_logger.LogDebug("{ScriptOutputLine}", line.ToLogLine());
+				continue;
+			}
+			// Process function result
+			await EventHandlerFunctionResultReadyAsync.Invoke(this, new FunctionResultReadyEventArgs(metadata)).ConfigureAwait(false);
 		}
 	}
 
 	private async Task ReadErrorStreamAsync(Process sender, ReadErrorStreamEventArgs args)
 	{
 		while (!args.CancellationToken.IsCancellationRequested) {
-			while (await args.StandardError.ReadLineAsync().ConfigureAwait(false) is { } line) {
-				await EventHandlerErrorStreamReceivedAsync.Invoke(this, new ErrorStreamReceivedEventArgs(line)).ConfigureAwait(false);
+			string? line;
+			try {
+				line = await args.StandardError.ReadLineAsync().ConfigureAwait(false);
+			} catch (Exception ex) when (ex is IOException or ObjectDisposedException) {
+				break;
 			}
-			await Task.Delay(TimeSpan.FromMilliseconds(200), args.CancellationToken).ConfigureAwait(false);
+			if (line is null) break; // EOF: bash's stderr closed, or the stream was disposed.
+			await EventHandlerErrorStreamReceivedAsync.Invoke(this, new ErrorStreamReceivedEventArgs(line)).ConfigureAwait(false);
 		}
 	}
-	
+
+	// Dispose cancels _readerCts before it stops bash, so a still-live token when the readers end means bash
+	// exited on its own (crash, OOM kill, a hit resource limit), not that we asked. Surface that so pending
+	// calls fail with a meaningful error instead of waiting on a result that can never arrive.
+	private async Task NotifyIfExitedUnexpectedlyAsync()
+	{
+		if (_readerCts.IsCancellationRequested) return;
+		int? exitCode = null;
+		try { if (_process.HasExited) exitCode = _process.ExitCode; } catch (InvalidOperationException) { }
+		_logger.LogError("Bash process exited unexpectedly (exit code {ExitCode})", exitCode?.ToString() ?? "unknown");
+		if (EventHandlerProcessExitedUnexpectedlyAsync != null) {
+			await EventHandlerProcessExitedUnexpectedlyAsync.Invoke(this, new ProcessExitedEventArgs(exitCode)).ConfigureAwait(false);
+		}
+	}
+
 	#endregion Bash process stream handlers
 
 	public void Dispose()
 	{
+		// Signal the stdout/stderr readers to stop first: their outer loop polls _readerCts, so once bash
+		// exits below and its pipes reach EOF the readers fall out of their loops instead of blocking or
+		// racing the stream disposal.
+		if (!_readerCts.IsCancellationRequested) _readerCts.Cancel();
 		// Dispose may run on a process that never started, when CreateAsync cleans up a failed startup:
 		// the redirected streams and HasExited are valid only after Start, so gate on _IsRunning and let
 		// the unstarted case fall through to disposing the Process object. The try guards the narrow race
@@ -252,5 +298,6 @@ public class BashProcess: IDisposable
 		EventHandlerReadOutputStreamAsync -= ReadOutputStreamAsync;
 		EventHandlerReadErrorStreamAsync -= ReadErrorStreamAsync;
 		_process.Dispose();
+		_readerCts.Dispose();
 	}
 }

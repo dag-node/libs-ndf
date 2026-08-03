@@ -66,6 +66,7 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 		bashProcess.EventHandlerFunctionResultReadyAsync += ProcessResult;
 		bashProcess.EventHandlerErrorStreamReceivedAsync += HandleError;
 		bashProcess.EventHandlerFunctionPidReadyAsync += RecordFunctionPid;
+		bashProcess.EventHandlerProcessExitedUnexpectedlyAsync += FailPendingCallsOnUnexpectedExit;
 		return bashProcess;
 	}
 
@@ -126,6 +127,21 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 		}
 	}
 	
+	/// <summary>
+	/// Fails every queued and running call when bash exits unexpectedly, so their callers get an
+	/// <see cref="InteroperabilityException"/> naming the exit rather than blocking forever on a result the
+	/// dead process can never deliver — the meaningful error a hit resource limit or an OOM kill surfaces as.
+	/// <c>TrySetException</c> leaves a call that already completed or cancelled untouched.
+	/// </summary>
+	private Task FailPendingCallsOnUnexpectedExit(BashProcess sender, ProcessExitedEventArgs args)
+	{
+		var ex = new InteroperabilityException(
+			$"Bash process exited unexpectedly (exit code {args.ExitCode?.ToString() ?? "unknown"}); the function call cannot complete");
+		foreach (var startArgs in _queueFunctionsToCall) startArgs.FunctionResultCompletionSource.TrySetException(ex);
+		foreach (var startArgs in _queueRunningFunctions.Values) startArgs.FunctionResultCompletionSource.TrySetException(ex);
+		return Task.CompletedTask;
+	}
+
 	/// <summary>
 	/// Records a call's root PID from its <c>___BEGIN_FN__</c> marker, but only while the call is still
 	/// running: a marker that races behind a very fast call's <c>___END_FN__</c> is dropped so the
@@ -352,6 +368,7 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 			bashProcess.EventHandlerFunctionResultReadyAsync -= ProcessResult;
 			bashProcess.EventHandlerErrorStreamReceivedAsync -= HandleError;
 			bashProcess.EventHandlerFunctionPidReadyAsync -= RecordFunctionPid;
+			bashProcess.EventHandlerProcessExitedUnexpectedlyAsync -= FailPendingCallsOnUnexpectedExit;
 			bashProcess.Dispose();
 		}
 	}

@@ -34,7 +34,9 @@ public class BashScriptPipelineTests
 		function get_int() { echo 42; }
 		function double_arg() { echo $(( $2 * 2 )); }
 		function get_lines() { printf 'alpha\nbeta\ngamma\n'; }
-		function get_csv() { printf 'one,two,three'; }
+		function get_path() { printf '/usr/bin:/bin:/usr/local/bin'; }
+		function get_nums() { printf '1\n2\n3\n'; }
+		function get_people_csv() { printf 'name,age\nAlice,30\nBob,25\n'; }
 		function echo_args() { shift; echo "$*"; }
 		function is_zero() { [ "$2" -eq 0 ]; }
 		function get_state() { printf '  procESSing  \n'; }
@@ -79,7 +81,7 @@ public class BashScriptPipelineTests
 	}
 
 	[TestMethod]
-	public async Task SupportsCustomParserAndSeparator()
+	public async Task SupportsCustomParserOnTheGenericCall()
 	{
 		using var scripts = new TemporaryDirectory("api-custom");
 		await using var bash = await CreateAsync(scripts);
@@ -88,9 +90,38 @@ public class BashScriptPipelineTests
 		bool yes = await bash.CallFunctionAsync<bool>("answer_yes",
 			resultParser: result => result.StandardOutput?.Trim() == "yes");
 		Assert.IsTrue(yes);
+	}
 
-		string[] parts = await bash.CallFunctionAsync<string[]>("get_csv", resultSeparator: ",");
-		CollectionAssert.AreEqual(new[] { "one", "two", "three" }, parts);
+	private sealed record Person(string Name, int Age);
+
+	[TestMethod]
+	public async Task CallFunctionEnumerableSplitsProjectsAndSkipsHeader()
+	{
+		using var scripts = new TemporaryDirectory("api-enumerable");
+		await using var bash = await CreateAsync(scripts);
+
+		// String items need the explicit type argument; the separator defaults to newline (one record per line).
+		IEnumerable<string> lines = await bash.CallFunctionEnumerableAsync<string>("get_lines");
+		CollectionAssert.AreEqual(new[] { "alpha", "beta", "gamma" }, lines.ToArray());
+
+		// A delimited scalar (PATH-like) splits on its own separator, not newline.
+		IEnumerable<string> dirs = await bash.CallFunctionEnumerableAsync<string>("get_path", resultSeparator: ":");
+		CollectionAssert.AreEqual(new[] { "/usr/bin", "/bin", "/usr/local/bin" }, dirs.ToArray());
+
+		// Typed items: lineParser projects each record; TItem is inferred from it.
+		IEnumerable<int> nums = await bash.CallFunctionEnumerableAsync("get_nums", lineParser: int.Parse);
+		CollectionAssert.AreEqual(new[] { 1, 2, 3 }, nums.ToArray());
+
+		// CSV is newline-delimited rows of comma-delimited fields: split on newline, skip the header row,
+		// and split each row on ',' inside the lineParser into a typed record.
+		IEnumerable<Person> people = await bash.CallFunctionEnumerableAsync("get_people_csv",
+			skipLines: 1,
+			lineParser: row => { var f = row.Split(','); return new Person(f[0], int.Parse(f[1])); });
+		CollectionAssert.AreEqual(new[] { new Person("Alice", 30), new Person("Bob", 25) }, people.ToArray());
+
+		// Without a lineParser only string items can be produced, so a non-string TItem fails closed.
+		await Assert.ThrowsExactlyAsync<InteroperabilityException>(
+			() => bash.CallFunctionEnumerableAsync<int>("get_nums"));
 	}
 
 	[TestMethod]
@@ -147,7 +178,7 @@ public class BashScriptPipelineTests
 		// kill_bash SIGKILLs the resident bash mid-call. The result can never arrive, so the call must fail
 		// with a meaningful error rather than wait forever; the timeout is a backstop that turns a
 		// regression (a hang) into a distinct, non-blocking failure.
-		var ex = await Assert.ThrowsExceptionAsync<InteroperabilityException>(
+		var ex = await Assert.ThrowsExactlyAsync<InteroperabilityException>(
 			() => bash.CallFunctionAsync<string>("kill_bash", timeout: TimeSpan.FromSeconds(30)));
 		StringAssert.Contains(ex.Message, "exited unexpectedly");
 	}

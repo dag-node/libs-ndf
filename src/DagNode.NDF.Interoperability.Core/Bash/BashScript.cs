@@ -327,8 +327,10 @@ public class BashScript : IDisposable, IAsyncDisposable
     /// conversions cover <see cref="string"/>, the numeric types, <see cref="bool"/> (exit code 0
     /// means true), an enum (parsed case-insensitively after trimming), and
     /// <see cref="string"/>[]/<see cref="List{T}"/>/<see cref="IEnumerable{T}"/> of string split on
-    /// <paramref name="resultSeparator"/>. Supply <paramref name="resultParser"/> to take over the
-    /// conversion for any type, including a custom bool predicate over stdout rather than the exit code.
+    /// newline. Supply <paramref name="resultParser"/> to take over the conversion for any type, including
+    /// a custom bool predicate over stdout rather than the exit code. For a collection split on a separator
+    /// other than newline, or whose items parse to a type other than <see cref="string"/>, use
+    /// <see cref="CallFunctionEnumerableAsync{TItem}"/>.
     /// </summary>
     /// <remarks>Safe to call concurrently, but concurrent calls run at the same time in bash: a function
     /// that reads or writes shared state (a fixed file, an external service) must be reentrant, or the
@@ -339,7 +341,6 @@ public class BashScript : IDisposable, IAsyncDisposable
     /// <param name="asyncThen">Async hook run just after the function returns.</param>
     /// <param name="callOptions">Stream redirection and where the result is read from; defaults when null.</param>
     /// <param name="resultParser">When set, converts the <see cref="FunctionResult"/> itself, bypassing the built-in switch.</param>
-    /// <param name="resultSeparator">Separator the string-collection conversions split on; "\n" by default.</param>
     /// <param name="timeout">Stops waiting for the result after this duration; null waits indefinitely. See <see cref="RunFunctionAsync"/>.</param>
     /// <param name="cancellationToken">Cancels waiting for the result.</param>
     /// <typeparam name="T">Type the function's output is parsed into.</typeparam>
@@ -350,7 +351,6 @@ public class BashScript : IDisposable, IAsyncDisposable
 	    Func<FunctionStartEventArgs, Task>? asyncBefore = null, Func<FunctionFinishedEventArgs, Task>? asyncThen = null,
 	    CallOptions? callOptions = null,
 	    Func<FunctionResult, T>? resultParser = null,
-	    string resultSeparator = "\n",
 	    TimeSpan? timeout = null,
 	    CancellationToken cancellationToken = default)
     {
@@ -372,12 +372,66 @@ public class BashScript : IDisposable, IAsyncDisposable
             var t when t == typeof(double) => ParseDouble<T>(resultString, functionName),
             var t when t == typeof(decimal) => ParseDecimal<T>(resultString, functionName),
             var t when t == typeof(bool) => (T)(object)(functionResult.ExitCode == 0), // Exit code 0 indicates success
-            var t when t == typeof(string[]) => (T)(object)SplitResult(resultString, resultSeparator),
-            var t when t == typeof(List<string>) => (T)(object)SplitResult(resultString, resultSeparator).ToList(),
-            var t when t == typeof(IEnumerable<string>) => (T)(object)SplitResult(resultString, resultSeparator),
+            var t when t == typeof(string[]) => (T)(object)SplitResult(resultString, "\n"),
+            var t when t == typeof(List<string>) => (T)(object)SplitResult(resultString, "\n").ToList(),
+            var t when t == typeof(IEnumerable<string>) => (T)(object)SplitResult(resultString, "\n"),
             { IsEnum: true } => (T) Enum.Parse(typeof(T), resultString.Trim(), ignoreCase: true),
             _ => throw new NotSupportedException($"The type '{typeof(T)}' is not supported")
         };
+    }
+
+    /// <summary>
+    /// Runs the function, splits its captured output on <paramref name="resultSeparator"/> (newline by
+    /// default, so one record per line), drops the first <paramref name="skipLines"/> records (a header),
+    /// and projects each remaining record with <paramref name="lineParser"/> into
+    /// <typeparamref name="TItem"/>. Projection is deferred — each
+    /// record is parsed as the returned sequence is enumerated, so a <paramref name="lineParser"/> that
+    /// throws surfaces on enumeration, not on the await; materialize with <c>ToList()</c> to pull the whole
+    /// result. With no <paramref name="lineParser"/>, <typeparamref name="TItem"/> must be
+    /// <see cref="string"/>.
+    /// </summary>
+    /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
+    /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
+    /// <param name="resultSeparator">Separator the captured output is split on; "\n" (one record per line) by default. Other delimited outputs split too, e.g. " " for <c>"${arr[@]}"</c> or ":" for a PATH-like value.</param>
+    /// <param name="skipLines">Number of leading records to drop before projecting; 1 skips a classic header row, 0 (default) drops none.</param>
+    /// <param name="lineParser">Projects each record into <typeparamref name="TItem"/>; identity when null (string items only). For a CSV row, split the record on "," inside this delegate.</param>
+    /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>
+    /// <param name="asyncThen">Async hook run just after the function returns.</param>
+    /// <param name="callOptions">Stream redirection and where the result is read from; defaults when null.</param>
+    /// <param name="timeout">Stops waiting for the result after this duration; null waits indefinitely.</param>
+    /// <param name="cancellationToken">Cancels waiting for the result.</param>
+    /// <typeparam name="TItem">Type each record is projected into.</typeparam>
+    /// <returns>The captured output split and lazily projected into <typeparamref name="TItem"/> items.</returns>
+    /// <exception cref="InteroperabilityException">When <paramref name="lineParser"/> is null and <typeparamref name="TItem"/> is not <see cref="string"/>.</exception>
+    /// <exception cref="TimeoutException">When <paramref name="timeout"/> elapses before the result arrives.</exception>
+    public async Task<IEnumerable<TItem>> CallFunctionEnumerableAsync<TItem>(
+	    string functionName, string[]? functionArgs = null,
+	    string resultSeparator = "\n",
+	    int skipLines = 0,
+	    Func<string, TItem>? lineParser = null,
+	    Func<FunctionStartEventArgs, Task>? asyncBefore = null, Func<FunctionFinishedEventArgs, Task>? asyncThen = null,
+	    CallOptions? callOptions = null,
+	    TimeSpan? timeout = null,
+	    CancellationToken cancellationToken = default)
+    {
+	    Func<string, TItem> parseItem = lineParser ?? StringIdentityParser<TItem>();
+	    callOptions ??= CallOptions.CreateFactoryDefault;
+	    FunctionResult functionResult = await RunFunctionAsync(functionName, functionArgs,
+		    asyncBefore, asyncThen, callOptions, timeout, cancellationToken).ConfigureAwait(false);
+	    string? str = GetResultStringFromFunctionResult(functionResult, callOptions.ReadResultFrom);
+	    if (str == null) throw new InteroperabilityException("Function result is null");
+	    // Not materialized: each record is projected as the caller enumerates. ToList() to pull them all.
+	    return SplitResult(str, resultSeparator).Skip(skipLines).Select(parseItem);
+    }
+
+    // Fail closed: without a lineParser only string segments can be produced, so a non-string TItem is a
+    // caller error named at the point it is requested rather than an invalid cast deep in enumeration.
+    private static Func<string, TItem> StringIdentityParser<TItem>()
+    {
+	    if (typeof(TItem) != typeof(string))
+		    throw new InteroperabilityException(
+			    $"A lineParser is required to produce '{typeof(TItem)}' items; without one only string items are produced");
+	    return static s => (TItem)(object)s;
     }
 
     private static string[] SplitResult(string resultString, string resultSeparator) =>

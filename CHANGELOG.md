@@ -5,6 +5,31 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this proje
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the major version is `0`, a
 breaking change raises the minor version.
 
+## [0.11.0] - 2026-08-03
+
+### Changed
+
+- **Breaking.** `CallFunctionAsync<T>` no longer accepts `resultSeparator`; its
+  `string[]`/`List<string>`/`IEnumerable<string>` conversions split on newline. A custom separator, a
+  header row to skip, or items of another type move to the new `CallFunctionEnumerableAsync<TItem>`.
+- A function call's `{prefix}.out/.err/.log/.in` files are removed rather than left to accumulate on
+  the tmpfs — by default when the instance is disposed. The stream contents are captured onto
+  `FunctionResult` before any deletion, so nothing a caller reads back is lost, and a caller-supplied
+  custom-path file is never deleted.
+
+### Added
+
+- `CallFunctionEnumerableAsync<TItem>` splits the captured output on a separator (newline by default,
+  one record per line; `" "` for `"${arr[@]}"`, `":"` for a PATH-like value), drops `skipLines` leading
+  records, and projects each record with a `lineParser` into `TItem`, deferred. Without a `lineParser`
+  the items are `string`.
+- `StreamFunctionAsync<TItem>` follows the result file line by line as the function writes it, with
+  bounded memory, for a large or open-ended producer such as `tail -f` or `cat bigfile`. Breaking the
+  `await foreach` or cancelling terminates the function's process tree.
+- `BashScriptSettings.FunctionFileCleanup` (default `OnDispose`; also `AfterCall` and `Never`) and a
+  per-call `CallOptions.Cleanup` override govern when the `{prefix}` files are deleted;
+  `BashScriptSettings.StreamFollowPollInterval` (default 50ms) sets the follow-poll cadence.
+
 ## [0.10.1] - 2026-08-03
 
 ### Fixed
@@ -122,6 +147,7 @@ First published release.
   `EventHandlerFunctionStartAsync` / `EventHandlerFunctionFinishedAsync` hooks for raw command
   and output access.
 
+[0.11.0]: https://github.com/dag-node/libs-ndf/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/dag-node/libs-ndf/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/dag-node/libs-ndf/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/dag-node/libs-ndf/compare/v0.8.2...v0.9.0

@@ -330,6 +330,9 @@ public class BashScript : IDisposable, IAsyncDisposable
     /// <paramref name="resultSeparator"/>. Supply <paramref name="resultParser"/> to take over the
     /// conversion for any type, including a custom bool predicate over stdout rather than the exit code.
     /// </summary>
+    /// <remarks>Safe to call concurrently, but concurrent calls run at the same time in bash: a function
+    /// that reads or writes shared state (a fixed file, an external service) must be reentrant, or the
+    /// caller must serialize those calls. See <see cref="RunFunctionAsync"/>.</remarks>
     /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
     /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
     /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>
@@ -396,10 +399,20 @@ public class BashScript : IDisposable, IAsyncDisposable
     /// <summary>
     /// Dispatches the function and returns its <see cref="FunctionResult"/> once the marker line for
     /// this call arrives on stdout. <paramref name="timeout"/> and <paramref name="cancellationToken"/>
-    /// bound the wait, not the bash function: on either, the wait ends but the function keeps running
-    /// in bash. Terminating the function itself through its per-call PID file is a planned enhancement.
-    /// Inspect the result through <see cref="EventHandlerFunctionFinishedAsync"/>.
+    /// bound the wait; on either, the wait ends and the function's own process tree is terminated too,
+    /// unless <see cref="BashScriptSettings.TerminateFunctionProcessTreeOnTimeout"/> is off, in which
+    /// case the function keeps running in bash. Inspect the result through
+    /// <see cref="EventHandlerFunctionFinishedAsync"/>.
     /// </summary>
+    /// <remarks>
+    /// Calls execute concurrently. Each runs in its own bash subshell (one subprocess per call) with its
+    /// own isolated {prefix} stream files and a marker-matched result, so dispatching several calls at once
+    /// — without awaiting the previous one — is safe and every caller gets its own result. The library does
+    /// not serialize the functions themselves: two concurrent calls to a function that reads or writes state
+    /// shared outside its subshell — a fixed file, a database, an external service, a device — run at the
+    /// same time and can interleave or corrupt that state. Such a function must be reentrant, or the caller
+    /// must serialize those calls (await each before issuing the next, or guard them with its own lock).
+    /// </remarks>
     /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
     /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
     /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>

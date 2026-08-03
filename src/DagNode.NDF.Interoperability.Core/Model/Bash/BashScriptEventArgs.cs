@@ -26,9 +26,12 @@ public class FunctionStartEventArgs(CallOptions callOptions, AbsolutePath prefix
 	public AbsolutePath InFilePath { get => FunctionFiles.InputIn; }
 	
 	/// <summary>
-	/// Set by function processor when the result is ready. 
+	/// Set by the function processor when the result is ready. Created with
+	/// <see cref="TaskCreationOptions.RunContinuationsAsynchronously"/> so a waiter's continuation does
+	/// not run inline on the stdout-reader thread that completes it — otherwise, under concurrent calls,
+	/// that thread stalls inside a continuation and stops delivering further results, deadlocking.
 	/// </summary>
-	public TaskCompletionSource<FunctionResult> FunctionResultCompletionSource { get; } = new();
+	public TaskCompletionSource<FunctionResult> FunctionResultCompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 	//TODO: To implement function call timeouts, we need to keep track of spawned subprocess PIDs
 	//public TimeSpan? Timeout { get; set; } = timeout;
@@ -79,4 +82,10 @@ public class FunctionResultReadyEventArgs(IFunctionResultMetadata metadata) : Ev
 public class ErrorStreamReceivedEventArgs(string error) : EventArgs
 {
 	public string Error { get; } = error;
+}
+
+public class FunctionPidReadyEventArgs(string functionMarkerTag, int pid) : EventArgs
+{
+	public string FunctionMarkerTag { get; } = functionMarkerTag;
+	public int Pid { get; } = pid;
 }

@@ -22,11 +22,12 @@ public delegate void OnAfterCreateFunctionWorkDirDelegate(string workDirPath);
 /// sourcing cost once. Each call is dispatched asynchronously, writes its streams to per-call
 /// {prefix} files under the configured working directory, and is matched back to its caller by a
 /// marker line on stdout; the captured output is then parsed into the requested .NET type.
-/// Create instances with <see cref="CreateAsync(BashScriptSettings, BashProcessSettings, FunctionWorkDirSettings, ILogger, CancellationTokenSource)"/>
-/// and dispose them to stop the process. For one-off calls that do not justify a resident process,
-/// use <see cref="FunctionDirect"/> instead.
+/// Create instances with <see cref="CreateAsync(BashScriptSettings, BashProcessSettings, FunctionWorkDirSettings, ILogger, CancellationToken)"/>
+/// and dispose them to stop the process. <see cref="DisposeAsync"/> first lets calls already
+/// dispatched finish; the synchronous <see cref="Dispose"/> cancels them instead. For one-off calls
+/// that do not justify a resident process, use <see cref="FunctionDirect"/> instead.
 /// </summary>
-public class BashScript : IDisposable
+public class BashScript : IDisposable, IAsyncDisposable
 {
 	#region Constructor settings
 	
@@ -73,9 +74,13 @@ public class BashScript : IDisposable
 	#region Private fields
 	
 	private readonly FunctionProcessor _functionProcessor;
-    private readonly CancellationTokenSource _cts;
+    // Owned, never accepted from a caller: it controls this instance's resident bash process, and a
+    // shared source would let unrelated code tear the session down. Per-call and startup cancellation
+    // arrive as a CancellationToken instead, linked with this source where they are awaited.
+    private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly ILogger _logger;
-    
+    private bool _disposed;
+
     #endregion Private fields
     #region Lifecycle hooks
     
@@ -162,75 +167,75 @@ public class BashScript : IDisposable
     /// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
     /// <param name="bashProcessSettings">Process configuration; defaults are used when null.</param>
     /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
-    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <param name="cancellationToken">Cancels startup and script sourcing; the resident process is stopped by disposing the instance.</param>
     /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    BashProcessSettings? bashProcessSettings,
-	    ILogger? logger = null, CancellationTokenSource? cts = null)
+	    ILogger? logger = null, CancellationToken cancellationToken = default)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts).ConfigureAwait(false);
+		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Creates and starts an instance, overriding only where the function files are written.</summary>
     /// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
     /// <param name="scriptLoggerSettings">Working directory configuration; defaults are used when null.</param>
     /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
-    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <param name="cancellationToken">Cancels startup and script sourcing; the resident process is stopped by disposing the instance.</param>
     /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    FunctionWorkDirSettings? scriptLoggerSettings = null,
-	    ILogger? logger = null, CancellationTokenSource? cts = null)
+	    ILogger? logger = null, CancellationToken cancellationToken = default)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts).ConfigureAwait(false);
+		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Creates and starts an instance with both process and working directory configured.</summary>
     /// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
     /// <param name="bashProcessSettings">Process configuration.</param>
     /// <param name="functionWorkDirSettings">Working directory configuration.</param>
     /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
-    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <param name="cancellationToken">Cancels startup and script sourcing; the resident process is stopped by disposing the instance.</param>
     /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(string scriptFileName,
 	    BashProcessSettings bashProcessSettings, FunctionWorkDirSettings functionWorkDirSettings,
-	    ILogger? logger = null, CancellationTokenSource? cts = null)
+	    ILogger? logger = null, CancellationToken cancellationToken = default)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFileName),
-		    bashProcessSettings, functionWorkDirSettings, logger, cts).ConfigureAwait(false);
+		    bashProcessSettings, functionWorkDirSettings, logger, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Creates and starts an instance for a script at an absolute path.</summary>
     /// <param name="scriptFilePath">Absolute path to the bash script.</param>
     /// <param name="bashProcessSettings">Process configuration; defaults are used when null.</param>
     /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
-    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <param name="cancellationToken">Cancels startup and script sourcing; the resident process is stopped by disposing the instance.</param>
     /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    BashProcessSettings? bashProcessSettings,
-	    ILogger? logger = null, CancellationTokenSource? cts = null)
+	    ILogger? logger = null, CancellationToken cancellationToken = default)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cts).ConfigureAwait(false);
+		    bashProcessSettings, FunctionWorkDirSettings.CreateFactoryDefault, logger, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Creates and starts an instance at an absolute path, overriding only the working directory.</summary>
     /// <param name="scriptFilePath">Absolute path to the bash script.</param>
     /// <param name="scriptLoggerSettings">Working directory configuration; defaults are used when null.</param>
     /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
-    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <param name="cancellationToken">Cancels startup and script sourcing; the resident process is stopped by disposing the instance.</param>
     /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    FunctionWorkDirSettings? scriptLoggerSettings = null,
-	    ILogger? logger = null, CancellationTokenSource? cts = null)
+	    ILogger? logger = null, CancellationToken cancellationToken = default)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cts).ConfigureAwait(false);
+		    BashProcessSettings.CreateFactoryDefault, scriptLoggerSettings, logger, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Creates and starts an instance at an absolute path with both settings configured.</summary>
     /// <param name="scriptFilePath">Absolute path to the bash script.</param>
     /// <param name="bashProcessSettings">Process configuration.</param>
     /// <param name="functionWorkDirSettings">Working directory configuration.</param>
     /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/>.</param>
-    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <param name="cancellationToken">Cancels startup and script sourcing; the resident process is stopped by disposing the instance.</param>
     /// <returns>A started instance with the script already sourced.</returns>
     public static async Task<BashScript> CreateAsync(AbsolutePath scriptFilePath,
 	    BashProcessSettings bashProcessSettings, FunctionWorkDirSettings functionWorkDirSettings,
-	    ILogger? logger = null, CancellationTokenSource? cts = null)
+	    ILogger? logger = null, CancellationToken cancellationToken = default)
 	    => await CreateAsync(BashScriptSettings.CreateFactoryDefault(scriptFilePath),
-		    bashProcessSettings, functionWorkDirSettings, logger, cts).ConfigureAwait(false);
+		    bashProcessSettings, functionWorkDirSettings, logger, cancellationToken).ConfigureAwait(false);
     #endregion Factory overloads
     #region Async factory
     /// <summary>
@@ -242,34 +247,40 @@ public class BashScript : IDisposable
     /// <param name="bashProcessSettings">Process configuration; defaults are used when null.</param>
     /// <param name="functionWorkDirSettings">Working directory configuration; defaults are used when null.</param>
     /// <param name="logger">Logger for this instance; falls back to <see cref="LoggingFactory"/> when null.</param>
-    /// <param name="cts">Token source cancelling the resident process; a new one is created when null.</param>
+    /// <param name="cancellationToken">Cancels startup and script sourcing; the resident process is stopped by disposing the instance.</param>
     /// <returns>A started instance with the script already sourced.</returns>
     /// <exception cref="InteroperabilityException">When <paramref name="bashScriptSettings"/> is null, the script is missing or unreadable, or the working directory cannot be prepared.</exception>
     public static async Task<BashScript> CreateAsync(
 	    BashScriptSettings bashScriptSettings,
-	    BashProcessSettings? bashProcessSettings = null,	
+	    BashProcessSettings? bashProcessSettings = null,
 	    FunctionWorkDirSettings? functionWorkDirSettings = null,
 	    ILogger? logger = null,
-	    CancellationTokenSource? cts = null)
+	    CancellationToken cancellationToken = default)
     {
 	    if (bashScriptSettings == null) throw new InteroperabilityException(nameof(bashScriptSettings));
-	    cts ??= new CancellationTokenSource();
 	    logger ??= LoggingFactory.CreateLogger<BashScript>();
-	    var bashScript = new BashScript(bashScriptSettings, bashProcessSettings, functionWorkDirSettings, logger, cts);
-	    // Start bash processes and check for enqueued function calls
-	    await bashScript.StartAsync().ConfigureAwait(false);
+	    var bashScript = new BashScript(bashScriptSettings, bashProcessSettings, functionWorkDirSettings, logger);
+	    try {
+		    // Start bash processes and check for enqueued function calls
+		    await bashScript.StartAsync(cancellationToken).ConfigureAwait(false);
+	    } catch {
+		    // Startup threw or was cancelled (a wedged tmpfs mount, or a script on a slow/hung network
+		    // share) after the bash process or tmpfs may have been acquired. Dispose the half-built
+		    // instance so nothing leaks, then rethrow: CreateAsync returns a started instance or nothing.
+		    bashScript.Dispose();
+		    throw;
+	    }
 	    return bashScript;
     }
-    
+
     #endregion Async factory
     #region Constructor logic
-    
+
     private BashScript(
 	    BashScriptSettings bashScriptSettings,
 	    BashProcessSettings? bashProcessSettings = null,
 	    FunctionWorkDirSettings? functionWorkDirSettings = null,
-	    ILogger? logger = null,
-	    CancellationTokenSource? cts = null)
+	    ILogger? logger = null)
     {
 	    BashScriptSettings = bashScriptSettings ?? throw new ArgumentException(nameof(bashScriptSettings));
 	    BashProcessSettings = bashProcessSettings ?? BashProcessSettings.CreateFactoryDefault;
@@ -277,7 +288,6 @@ public class BashScript : IDisposable
 	    _logger = logger ?? LoggingFactory.CreateLogger<BashScript>();
 	    // IsDebug gates LogDebug calls, so it tracks what the configured logger will actually emit.
 	    BashScriptSettings.IsDebug = _logger.IsEnabled(LogLevel.Debug);
-	    _cts = cts ?? new CancellationTokenSource();
 	    if (bashScriptSettings.UseInstanceMarkerTag) {
 		    InstanceMarkerTag = Helpers.GenerateRandomString(bashScriptSettings.InstanceMarkerTagLength);
 	    }
@@ -289,7 +299,7 @@ public class BashScript : IDisposable
 	    _configuredFunctionWorkDir = AbsolutePath.Create(workDir);
 	    
         // Create a new function processor instance, this does not start bash processes yet
-        _functionProcessor ??= new FunctionProcessor(this, _logger, _cts);
+        _functionProcessor ??= new FunctionProcessor(this, _logger, _lifetimeCts);
     }
     
     #endregion Constructor logic
@@ -313,33 +323,45 @@ public class BashScript : IDisposable
 		    .GetResult();
 
     /// <summary>
-    /// Get strongly typed value from the combination of function standard output and standard error streams.
-    /// Standard or error outputs can be suppressed by configuring BashProcessSettings.RedirectStandardOutput
-    /// or BashProcessSettings.RedirectStandardError (true/false). This method calls RunFunctionAsync,
-    /// then tries to parse function output to the concrete type. 
+    /// Runs the function and converts its captured output to <typeparamref name="T"/>. Built-in
+    /// conversions cover <see cref="string"/>, the numeric types, <see cref="bool"/> (exit code 0
+    /// means true), an enum (parsed case-insensitively after trimming), and
+    /// <see cref="string"/>[]/<see cref="List{T}"/>/<see cref="IEnumerable{T}"/> of string split on
+    /// <paramref name="resultSeparator"/>. Supply <paramref name="resultParser"/> to take over the
+    /// conversion for any type, including a custom bool predicate over stdout rather than the exit code.
     /// </summary>
-    /// <param name="functionName">Name of the bash function to execute, the function must be present in the script configured for this instance</param>
-    /// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
-    /// <param name="asyncBefore">Run custom async hook just before the bash function is executed.</param>
-    /// <param name="asyncThen">Run custom async hook just after the bash function is executed.</param>
-    /// <param name="callOptions"></param>
-    /// <param name="timeout"></param>
-    /// <typeparam name="T">Type of the function result</typeparam>
-    /// <returns>Strongly typed function result</returns>
-    /// <exception cref="NotSupportedException"></exception>
+    /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
+    /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
+    /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>
+    /// <param name="asyncThen">Async hook run just after the function returns.</param>
+    /// <param name="callOptions">Stream redirection and where the result is read from; defaults when null.</param>
+    /// <param name="resultParser">When set, converts the <see cref="FunctionResult"/> itself, bypassing the built-in switch.</param>
+    /// <param name="resultSeparator">Separator the string-collection conversions split on; "\n" by default.</param>
+    /// <param name="timeout">Stops waiting for the result after this duration; null waits indefinitely. See <see cref="RunFunctionAsync"/>.</param>
+    /// <param name="cancellationToken">Cancels waiting for the result.</param>
+    /// <typeparam name="T">Type the function's output is parsed into.</typeparam>
+    /// <returns>The function's output parsed as <typeparamref name="T"/>.</returns>
+    /// <exception cref="NotSupportedException">When <typeparamref name="T"/> has no built-in conversion and no <paramref name="resultParser"/> is supplied.</exception>
+    /// <exception cref="TimeoutException">When <paramref name="timeout"/> elapses before the result arrives.</exception>
     public async Task<T> CallFunctionAsync<T>(string functionName, string[]? functionArgs = null,
 	    Func<FunctionStartEventArgs, Task>? asyncBefore = null, Func<FunctionFinishedEventArgs, Task>? asyncThen = null,
-	    CallOptions? callOptions = null, TimeSpan? timeout = null)
+	    CallOptions? callOptions = null,
+	    Func<FunctionResult, T>? resultParser = null,
+	    string resultSeparator = "\n",
+	    TimeSpan? timeout = null,
+	    CancellationToken cancellationToken = default)
     {
-	    
 	    callOptions ??= CallOptions.CreateFactoryDefault;
 	    FunctionResult functionResult = await RunFunctionAsync(functionName, functionArgs,
-		    asyncBefore, asyncThen, callOptions, timeout).ConfigureAwait(false);
-	    
+		    asyncBefore, asyncThen, callOptions, timeout, cancellationToken).ConfigureAwait(false);
+
+	    // A caller-supplied parser owns the whole conversion, so it can read any stream or the exit code.
+	    if (resultParser != null) return resultParser(functionResult);
+
 	    string? str = GetResultStringFromFunctionResult(functionResult, callOptions.ReadResultFrom);
 	    if (str == null && typeof(T) != typeof(bool)) throw new InteroperabilityException("Function result is null");
 	    string resultString = str!;
-	    
+
         return typeof(T) switch {
             var t when t == typeof(string) => (T)(object)resultString,
             var t when t == typeof(int) => ParseInt<T>(resultString, functionName),
@@ -347,12 +369,16 @@ public class BashScript : IDisposable
             var t when t == typeof(double) => ParseDouble<T>(resultString, functionName),
             var t when t == typeof(decimal) => ParseDecimal<T>(resultString, functionName),
             var t when t == typeof(bool) => (T)(object)(functionResult.ExitCode == 0), // Exit code 0 indicates success
-            var t when t == typeof(string[]) => (T)(object)resultString.Split('\n').ToArray(),
-            var t when t == typeof(List<string>) => (T)(object)resultString.Split('\n').ToList(),
-            { IsEnum: true } => (T) Enum.Parse(typeof(T), resultString),
+            var t when t == typeof(string[]) => (T)(object)SplitResult(resultString, resultSeparator),
+            var t when t == typeof(List<string>) => (T)(object)SplitResult(resultString, resultSeparator).ToList(),
+            var t when t == typeof(IEnumerable<string>) => (T)(object)SplitResult(resultString, resultSeparator),
+            { IsEnum: true } => (T) Enum.Parse(typeof(T), resultString.Trim(), ignoreCase: true),
             _ => throw new NotSupportedException($"The type '{typeof(T)}' is not supported")
         };
     }
+
+    private static string[] SplitResult(string resultString, string resultSeparator) =>
+	    resultString.Split(new[] { resultSeparator }, StringSplitOptions.None);
 
     private static string? GetResultStringFromFunctionResult(FunctionResult result, FunctionResultLocation resultLocation)
     {
@@ -368,27 +394,36 @@ public class BashScript : IDisposable
     }
 
     /// <summary>
-    /// Execute the bash function.
-    /// You can implement result processing logic using EventHandlerFunctionFinishedAsync.
+    /// Dispatches the function and returns its <see cref="FunctionResult"/> once the marker line for
+    /// this call arrives on stdout. <paramref name="timeout"/> and <paramref name="cancellationToken"/>
+    /// bound the wait, not the bash function: on either, the wait ends but the function keeps running
+    /// in bash. Terminating the function itself through its per-call PID file is a planned enhancement.
+    /// Inspect the result through <see cref="EventHandlerFunctionFinishedAsync"/>.
     /// </summary>
-    /// <param name="functionName"></param>
-    /// <param name="functionArgs"></param>
-    /// <param name="asyncBefore">Run custom async hook just before the bash function is executed.</param>
-    /// <param name="asyncThen">Run custom async hook just after the bash function is executed.</param>
-    /// <param name="options"></param>
-    /// <param name="timeout"></param>
-    /// <returns></returns>
+    /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
+    /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
+    /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>
+    /// <param name="asyncThen">Async hook run just after the function returns.</param>
+    /// <param name="options">Stream redirection and where the result is read from; defaults when null.</param>
+    /// <param name="timeout">Stops waiting for the result after this duration; null falls back to <see cref="BashScriptSettings.DefaultFunctionCallTimeout"/>, and <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> waits indefinitely.</param>
+    /// <param name="cancellationToken">Cancels waiting for the result.</param>
+    /// <returns>The result captured from the function's streams and exit code.</returns>
+    /// <exception cref="TimeoutException">When <paramref name="timeout"/> elapses before the result arrives.</exception>
     public async Task<FunctionResult> RunFunctionAsync(
-	    string functionName, string[]? functionArgs,
+	    string functionName, string[]? functionArgs = null,
 	    Func<FunctionStartEventArgs, Task>? asyncBefore = null,
 	    Func<FunctionFinishedEventArgs, Task>? asyncThen = null,
 	    CallOptions? options = null,
-	    TimeSpan? timeout = null)
+	    TimeSpan? timeout = null,
+	    CancellationToken cancellationToken = default)
     {
 	    Validation.CheckFunctionName(functionName);
+	    cancellationToken.ThrowIfCancellationRequested();
 
-	    //TODO: Keep track of subprocess PIDs and implement function timeout
-	    if (timeout != null) throw new NotImplementedException(nameof(timeout));
+	    // An explicit per-call timeout wins; otherwise fall back to the instance default. Either form
+	    // of "no timeout" (unset default or Timeout.InfiniteTimeSpan) collapses to null = wait forever.
+	    TimeSpan? effectiveTimeout = timeout ?? BashScriptSettings.DefaultFunctionCallTimeout;
+	    if (effectiveTimeout == Timeout.InfiniteTimeSpan) effectiveTimeout = null;
 
 	    var callOptions = options ?? CallOptions.CreateFactoryDefault;
 
@@ -421,11 +456,13 @@ public class BashScript : IDisposable
 		// Construct function call command started by bash, moved to FunctionProcessor.RunEnqueuedFunctionCallsAsync
 		// string bashProcessArgs = $"{BashProcess.FUNCTION_START_ASYNC_WRAPPER} {functionMarkerTag} "{redirectionCmd}" {functionName} \"{prefixPath}\" {quotedFunctionArgs}";
 		_functionProcessor.EnqueueCallFunctionItemThreadSafe(functionStartEventArgs);
-		
-		// Wait for the result asynchronously,
-		// set automatically by FunctionProcessor when it becomes available
-		FunctionResult result = await functionStartEventArgs.FunctionResultCompletionSource.Task.ConfigureAwait(false);
-		
+
+		// Wait for the result FunctionProcessor sets when the call's marker line arrives. netstandard2.1
+		// has no Task.WaitAsync(token), so cancel the wait by registering on the completion source: the
+		// token is linked with the instance lifetime (Dispose unblocks it) and, when given, a timeout.
+		// The function stays enqueued/running regardless; a later result is a no-op TrySetResult.
+		FunctionResult result = await WaitForResultAsync(functionStartEventArgs, effectiveTimeout, cancellationToken).ConfigureAwait(false);
+
 	    var functionFinishedEventArgs = new FunctionFinishedEventArgs {
 		    FunctionStartEventArgs = functionStartEventArgs,
 		    ExitCode = result.ExitCode,
@@ -442,21 +479,60 @@ public class BashScript : IDisposable
     }
 
     /// <summary>
-    /// Re-sources the configured script and any global function scripts into the running bash
-    /// process, then raises <see cref="EventHandlerScriptSourcedAsync"/>. Already performed during
-    /// <see cref="CreateAsync(BashScriptSettings, BashProcessSettings, FunctionWorkDirSettings, ILogger, CancellationTokenSource)"/>;
-    /// call it again to pick up edits to the script file.
+    /// Awaits the call's completion source, ending the wait early when <paramref name="cancellationToken"/>
+    /// or <paramref name="timeout"/> fires, or when the instance is disposed. On a timeout or caller
+    /// cancellation the bash function keeps running, so its process tree is terminated (unless
+    /// <see cref="BashScriptSettings.TerminateFunctionProcessTreeOnTimeout"/> is off); disposal is left to
+    /// session teardown. A timeout surfaces as <see cref="TimeoutException"/>; caller cancellation and
+    /// disposal surface as <see cref="OperationCanceledException"/>.
     /// </summary>
-    /// <returns>A task completing once every script is sourced and the hook has run.</returns>
-    public async Task SourceScriptFilesAsync()
+    private async Task<FunctionResult> WaitForResultAsync(
+	    FunctionStartEventArgs startArgs, TimeSpan? timeout, CancellationToken cancellationToken)
     {
-	    await _functionProcessor.SourceScriptFilesAsync().ConfigureAwait(false);
-	    // Optional hook when all script files are successfully sourced
-	    if (EventHandlerScriptSourcedAsync != null) {
-		    await EventHandlerScriptSourcedAsync.Invoke(this, new ScriptReadyEventArgs()).ConfigureAwait(false);   
+	    var completion = startArgs.FunctionResultCompletionSource;
+	    using var timeoutCts = timeout is { } t ? new CancellationTokenSource(t) : null;
+	    using var linkedCts = timeoutCts is null
+		    ? CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, cancellationToken)
+		    : CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, cancellationToken, timeoutCts.Token);
+	    using (linkedCts.Token.Register(static s => ((TaskCompletionSource<FunctionResult>)s!).TrySetCanceled(), completion)) {
+		    try {
+			    return await completion.Task.ConfigureAwait(false);
+		    } catch (OperationCanceledException) {
+			    bool timedOut = timeoutCts is { IsCancellationRequested: true };
+			    bool lifetimeCancelled = _lifetimeCts.IsCancellationRequested;
+			    // The function keeps running after the wait ends; reap its tree unless the whole session is
+			    // being disposed (which reaps everything) or the caller opted out.
+			    if (!lifetimeCancelled && BashScriptSettings.TerminateFunctionProcessTreeOnTimeout) {
+				    await _functionProcessor.TerminateCallAsync(
+					    startArgs.FunctionMarkerTag, BashScriptSettings.FunctionTerminationGracePeriod).ConfigureAwait(false);
+			    }
+			    // A timeout that is not also caller/lifetime cancellation is reported as a timeout.
+			    if (timedOut && !cancellationToken.IsCancellationRequested && !lifetimeCancelled) {
+				    throw new TimeoutException(
+					    $"Function '{startArgs.FunctionName}' did not return within {timeout!.Value.TotalMilliseconds}ms");
+			    }
+			    throw;
+		    }
 	    }
     }
-    
+
+    /// <summary>
+    /// Re-sources the configured script and any global function scripts into the running bash
+    /// process, then raises <see cref="EventHandlerScriptSourcedAsync"/>. Already performed during
+    /// <see cref="CreateAsync(BashScriptSettings, BashProcessSettings, FunctionWorkDirSettings, ILogger, CancellationToken)"/>;
+    /// call it again to pick up edits to the script file.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the sourcing.</param>
+    /// <returns>A task completing once every script is sourced and the hook has run.</returns>
+    public async Task SourceScriptFilesAsync(CancellationToken cancellationToken = default)
+    {
+	    await _functionProcessor.SourceScriptFilesAsync(cancellationToken).ConfigureAwait(false);
+	    // Optional hook when all script files are successfully sourced
+	    if (EventHandlerScriptSourcedAsync != null) {
+		    await EventHandlerScriptSourcedAsync.Invoke(this, new ScriptReadyEventArgs()).ConfigureAwait(false);
+	    }
+    }
+
 	#region Private TryParsers
     private static T ParseInt<T>(string output, string functionName)
     {
@@ -498,24 +574,46 @@ public class BashScript : IDisposable
 	    );
     
     #endregion Function sequence numbers
-    private async Task StartAsync() => await _functionProcessor.StartAsync().ConfigureAwait(false);
+    private async Task StartAsync(CancellationToken cancellationToken = default)
+	    => await _functionProcessor.StartAsync(cancellationToken).ConfigureAwait(false);
     /// <summary>
     /// Renders the function calls this instance has dispatched, in order, for diagnostics.
     /// </summary>
     /// <returns>A human-readable trace of the call history.</returns>
     public string GetTrace() => _functionProcessor.PrintFunctionCallTrace();
-    
+
 	#region Dispose
-	
+
     /// <summary>
-    /// Cancels outstanding function calls and shuts down the resident bash process. Calls still in
-    /// flight do not complete, so await them before disposing.
+    /// Graceful shutdown: lets calls already dispatched finish (bounded, see
+    /// <see cref="FunctionProcessor"/>) before cancelling the instance lifetime and stopping the
+    /// resident bash process. Prefer this from async code, via <c>await using</c>. Use the synchronous
+    /// <see cref="Dispose"/> to cancel in-flight calls instead of waiting for them.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+	    if (_disposed) return;
+	    _disposed = true;
+	    // Drain before cancelling: the dispatch loop and result readers run on _lifetimeCts, so the
+	    // in-flight calls can only complete while it is still live.
+	    await _functionProcessor.DisposeAsync().ConfigureAwait(false);
+	    if (!_lifetimeCts.IsCancellationRequested) _lifetimeCts.Cancel();
+	    _lifetimeCts.Dispose();
+    }
+
+    /// <summary>
+    /// Forceful shutdown: cancels outstanding function calls and stops the resident bash process
+    /// without waiting for calls in flight to finish. Use <see cref="DisposeAsync"/> to let them
+    /// complete first.
     /// </summary>
     public void Dispose()
     {
-	    if (!_cts.IsCancellationRequested) _cts.Cancel();
+	    if (_disposed) return;
+	    _disposed = true;
+	    if (!_lifetimeCts.IsCancellationRequested) _lifetimeCts.Cancel();
         _functionProcessor.Dispose();
+        _lifetimeCts.Dispose();
     }
-    
+
     #endregion Dispose
 }

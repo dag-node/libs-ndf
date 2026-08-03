@@ -85,6 +85,33 @@ public class FunctionParser
 		return true;
 	}
 
+	// ___BEGIN_FN__ {functionMarkerTag} {pid}
+	// Token-parsed (not offset-parsed like ___END_FN__): the marker tag carries no spaces, so the last
+	// whitespace token is the pid and everything between the marker and it is the tag.
+	public const string FUNCTION_BEGIN_MARKER = "___BEGIN_FN__";
+
+	/// <summary>
+	/// Recognizes a <c>___BEGIN_FN__ {functionMarkerTag} {pid}</c> line the async wrapper emits when it
+	/// backgrounds a call, so a caller can terminate that call's process tree.
+	/// </summary>
+	/// <param name="line">A bash process standard output line.</param>
+	/// <param name="functionMarkerTag">The call's marker tag when the line parses; otherwise empty.</param>
+	/// <param name="pid">The backgrounded call's PID when the line parses; otherwise 0.</param>
+	/// <returns>True when the line is a well-formed begin marker.</returns>
+	public static bool TryParseFunctionBegin(string line, out string functionMarkerTag, out int pid)
+	{
+		functionMarkerTag = string.Empty;
+		pid = 0;
+		if (string.IsNullOrEmpty(line) || !line.StartsWith(FUNCTION_BEGIN_MARKER, StringComparison.Ordinal)) return false;
+		if (line.Length <= FUNCTION_BEGIN_MARKER.Length || line[FUNCTION_BEGIN_MARKER.Length] != ' ') return false;
+		ReadOnlySpan<char> remainder = line.AsSpan(FUNCTION_BEGIN_MARKER.Length + 1);
+		int lastSpace = remainder.LastIndexOf(' ');
+		if (lastSpace <= 0) return false; // Need a non-empty tag and a pid token
+		if (!int.TryParse(remainder.Slice(lastSpace + 1), out pid)) return false;
+		functionMarkerTag = remainder.Slice(0, lastSpace).ToString();
+		return true;
+	}
+
 	public const string SOURCING_END_MARKER = "___END_SOURCE_FN__";
 	public const string ERROR_IN_FUNCTION = "ERROR_IN_FUNCTION";
 	public const string SOURCED_SUCCESSFULLY = "SOURCED_SUCCESSFULLY";

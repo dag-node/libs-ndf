@@ -20,8 +20,23 @@ public static class ProcessExtensions
 
 	public static ProcessStartInfo ConfigureWithSettings(this ProcessStartInfo startInfo, BashProcessSettings processSettings)
 	{
-		startInfo.FileName = processSettings.BashPath;
-		startInfo.Arguments = processSettings.ProcessArgs;
+		if (processSettings.UseOwnSession) {
+			// setsid starts bash in a new session, so bash becomes the session and process-group leader
+			// (bash's own $$ == its PGID), isolating its descendants from the .NET launcher's group.
+			// --wait keeps the setsid wrapper alive until bash exits, so this Process observes bash's real
+			// lifetime (HasExited/ExitCode) instead of setsid returning immediately; bash inherits setsid's
+			// redirected pipes, so stdin/stdout/stderr still reach .NET.
+			// NOTE: Process.Id is the waiting setsid wrapper, NOT bash. Never group-signal Process.Id — it
+			// targets the launcher's group. Session teardown uses bash's own $$ (___global__on_stop's group
+			// kill); Process.Kill(entireProcessTree) walks setsid -> bash -> children as the forceful belt.
+			startInfo.FileName = processSettings.SetsidPath;
+			startInfo.Arguments = string.IsNullOrEmpty(processSettings.ProcessArgs)
+				? $"--wait {processSettings.BashPath}"
+				: $"--wait {processSettings.BashPath} {processSettings.ProcessArgs}";
+		} else {
+			startInfo.FileName = processSettings.BashPath;
+			startInfo.Arguments = processSettings.ProcessArgs;
+		}
 		
 		// Set environment variables if provided, default empty
 		foreach (var env in processSettings.ProcessEnvironmentVariables) {

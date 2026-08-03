@@ -169,6 +169,45 @@ public class BashScriptPipelineTests
 		}
 	}
 
+	private static int CountResultFiles(string workDir) =>
+		Directory.Exists(workDir) ? Directory.GetFiles(workDir).Length : 0;
+
+	[TestMethod]
+	public async Task FunctionFileCleanupHonorsTheConfiguredMode()
+	{
+		// AfterCall: the call's {prefix} files are gone as soon as the call returns.
+		using (var scripts = new TemporaryDirectory("api-cleanup-after")) {
+			string path = scripts.WriteFile("api.sh", Script + "\n");
+			var settings = new BashScriptSettings(AbsolutePath.Create(path)) { FunctionFileCleanup = FunctionFileCleanup.AfterCall };
+			await using var bash = await BashScript.CreateAsync(settings);
+			await bash.CallFunctionAsync<int>("get_int");
+			Assert.AreEqual(0, CountResultFiles(bash.ConfiguredFunctionWorkDir), "AfterCall should delete the call's files immediately");
+		}
+
+		// OnDispose (default): files persist through the session, then are cleared on dispose.
+		using (var scripts = new TemporaryDirectory("api-cleanup-dispose")) {
+			string path = scripts.WriteFile("api.sh", Script + "\n");
+			var bash = await BashScript.CreateAsync(new BashScriptSettings(AbsolutePath.Create(path)));
+			await bash.CallFunctionAsync<int>("get_int");
+			string workDir = bash.ConfiguredFunctionWorkDir;
+			Assert.IsTrue(CountResultFiles(workDir) > 0, "OnDispose should keep the files during the session");
+			await bash.DisposeAsync();
+			Assert.AreEqual(0, CountResultFiles(workDir), "OnDispose should clear the files on dispose");
+		}
+
+		// Never: files remain after dispose (cleaned up here to keep the run hermetic).
+		using (var scripts = new TemporaryDirectory("api-cleanup-never")) {
+			string path = scripts.WriteFile("api.sh", Script + "\n");
+			var settings = new BashScriptSettings(AbsolutePath.Create(path)) { FunctionFileCleanup = FunctionFileCleanup.Never };
+			var bash = await BashScript.CreateAsync(settings);
+			await bash.CallFunctionAsync<int>("get_int");
+			string workDir = bash.ConfiguredFunctionWorkDir;
+			await bash.DisposeAsync();
+			Assert.IsTrue(CountResultFiles(workDir) > 0, "Never should leave the files on disk");
+			try { Directory.Delete(workDir, recursive: true); } catch { /* best-effort cleanup */ }
+		}
+	}
+
 	[TestMethod]
 	public async Task UnexpectedBashExitFailsPendingCallInsteadOfHanging()
 	{

@@ -27,6 +27,8 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 	// Marker tag -> the backgrounded call's root PID, reported by ___BEGIN_FN__. Lock-free; the hot path
 	// (dispatch, result) touches only concurrent collections. Read on the rare termination path.
 	private readonly ConcurrentDictionary<string, int> _runningCallPids = new();
+	// Library-managed {prefix} files whose deletion is deferred to disposal (FunctionFileCleanup.OnDispose).
+	private readonly ConcurrentBag<string> _filesToDeleteOnDispose = new();
 
 	#region Interlocked properties
 
@@ -101,11 +103,49 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 			// TrySetResult, not SetResult: the caller may have cancelled its wait (RunFunctionAsync
 			// links the per-call token onto this source), leaving it already completed. The function
 			// still ran, so record the result for the trace and drop it for the caller.
+			// Contents are captured on functionResult, so the on-disk files are safe to remove before the
+			// caller is unblocked — AfterCall then observes them already gone when the call returns.
+			ApplyFileCleanup(startArgs);
 			startArgs.FunctionResultCompletionSource.TrySetResult(functionResult);
 			_runningCallPids.TryRemove(metadata.FunctionMarkerTag, out _); // Finished: drop its PID
 			TrackFinishedItemThreadSafe(startArgs, metadata);
 		} catch (Exception ex) {
 			throw new InteroperabilityException(ex, $"Error processing result for {metadata.FunctionMarkerTag}");
+		}
+	}
+
+	/// <summary>
+	/// Deletes, or defers to disposal, a finished call's library-managed <c>{prefix}</c> files per the
+	/// effective <see cref="FunctionFileCleanup"/> (per-call <see cref="CallOptions.Cleanup"/> overriding the
+	/// instance setting). A caller-supplied <see cref="ResultLocationType.CustomPath"/> is never deleted.
+	/// </summary>
+	private void ApplyFileCleanup(FunctionStartEventArgs startArgs)
+	{
+		FunctionFileCleanup mode = startArgs.CallOptions.Cleanup ?? _bashScript.BashScriptSettings.FunctionFileCleanup;
+		if (mode == FunctionFileCleanup.Never) return;
+		foreach (string file in CollectDeletableFiles(startArgs)) {
+			if (mode == FunctionFileCleanup.AfterCall) TryDeleteFile(file);
+			else _filesToDeleteOnDispose.Add(file); // OnDispose
+		}
+	}
+
+	// The {prefix}.out/.err/.log/.in files the redirection actually wrote, excluding any CustomPath the
+	// caller owns. AbsolutePath converts to the string path implicitly.
+	private static IEnumerable<string> CollectDeletableFiles(FunctionStartEventArgs startArgs)
+	{
+		CallOptions co = startArgs.CallOptions;
+		if (co.HasOutFile() && co.ResultOutFileLocation.LocationType != ResultLocationType.CustomPath) yield return startArgs.OutFilePath;
+		if (co.HasErrFile() && co.ResultErrFileLocation.LocationType != ResultLocationType.CustomPath) yield return startArgs.ErrFilePath;
+		if (co.HasLogFile() && co.ResultLogFileLocation.LocationType != ResultLocationType.CustomPath) yield return startArgs.LogFilePath;
+		if (co.HasInFile() && co.InputFileLocation.LocationType != InputLocationType.TakeFromCustomPath) yield return startArgs.InFilePath;
+	}
+
+	private static void TryDeleteFile(string path)
+	{
+		try {
+			if (File.Exists(path)) File.Delete(path);
+		} catch (Exception) {
+			// Best effort: a leftover {prefix} file on tmpfs is not a call failure.
 		}
 	}
 
@@ -371,5 +411,7 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 			bashProcess.EventHandlerProcessExitedUnexpectedlyAsync -= FailPendingCallsOnUnexpectedExit;
 			bashProcess.Dispose();
 		}
+		// Bash has stopped writing, so clear the files FunctionFileCleanup.OnDispose deferred.
+		while (_filesToDeleteOnDispose.TryTake(out string? file)) TryDeleteFile(file);
 	}
 }

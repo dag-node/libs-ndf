@@ -105,6 +105,15 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	public TimeSpan FunctionTerminationGracePeriod { get; set; } = TimeSpan.FromSeconds(2);
 
 	/// <summary>
+	/// When the <c>{prefix}.out/.err/.log/.in</c> files a call's stream redirection wrote are deleted
+	/// (default <see cref="FunctionFileCleanup.OnDispose"/>). Contents are captured onto the
+	/// <see cref="FunctionResult"/> before any deletion, so cleanup never loses data a caller reads back; a
+	/// caller-supplied <see cref="ResultLocationType.CustomPath"/> file is never deleted. A per-call
+	/// <see cref="CallOptions.Cleanup"/> overrides this for one call.
+	/// </summary>
+	public FunctionFileCleanup FunctionFileCleanup { get; set; } = FunctionFileCleanup.OnDispose;
+
+	/// <summary>
 	/// How long <see cref="DagNode.NDF.Interoperability.Bash.BashScript.DisposeAsync"/> waits for calls
 	/// already dispatched to finish before it stops the resident bash process anyway (default 30s).
 	/// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> waits without a cap;

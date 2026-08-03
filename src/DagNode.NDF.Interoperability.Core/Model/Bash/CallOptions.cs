@@ -15,6 +15,12 @@ public class CallOptions
 	/// stored in ResultLocationType.PrefixOut.
 	/// </summary>
 	public FunctionResultLocation ReadResultFrom { get; set; } = FunctionResultLocation.PrefixOut;
+
+	/// <summary>
+	/// Overrides <see cref="BashScriptSettings.FunctionFileCleanup"/> for this one call; null (default) uses
+	/// the instance setting.
+	/// </summary>
+	public FunctionFileCleanup? Cleanup { get; set; }
 	
 	/// <summary>
 	/// Use customized stream redirection.

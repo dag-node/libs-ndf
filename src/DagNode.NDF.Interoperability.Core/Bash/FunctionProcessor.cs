@@ -27,6 +27,8 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 	// Marker tag -> the backgrounded call's root PID, reported by ___BEGIN_FN__. Lock-free; the hot path
 	// (dispatch, result) touches only concurrent collections. Read on the rare termination path.
 	private readonly ConcurrentDictionary<string, int> _runningCallPids = new();
+	// Library-managed {prefix} files whose deletion is deferred to disposal (FunctionFileCleanup.OnDispose).
+	private readonly ConcurrentBag<string> _filesToDeleteOnDispose = new();
 
 	#region Interlocked properties
 
@@ -83,8 +85,17 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 	{
 		IFunctionResultMetadata metadata = args.Metadata;
 		try {
-			// Get/Remove FunctionStartEventArgs from the running functions queue 
+			// Get/Remove FunctionStartEventArgs from the running functions queue
 			FunctionStartEventArgs startArgs = PopRunningFunctionItemThreadSafe(metadata.FunctionMarkerTag);
+			if (startArgs is null) return; // Already abandoned — e.g. a streamed call the caller terminated.
+			if (startArgs.IsStreaming) {
+				// The stream follows and cleans the result file itself; here just record completion so a
+				// finite producer's follow loop knows to drain and stop, carrying only the exit code.
+				startArgs.FunctionResultCompletionSource.TrySetResult(new FunctionResult(metadata.ExitCode, null, null, null, null, null));
+				_runningCallPids.TryRemove(metadata.FunctionMarkerTag, out _);
+				TrackFinishedItemThreadSafe(startArgs, metadata);
+				return;
+			}
 			CallOptions callOptions = startArgs.CallOptions; // Call options from start args
 
 			// Read function results from locations specified in call options
@@ -101,11 +112,49 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 			// TrySetResult, not SetResult: the caller may have cancelled its wait (RunFunctionAsync
 			// links the per-call token onto this source), leaving it already completed. The function
 			// still ran, so record the result for the trace and drop it for the caller.
+			// Contents are captured on functionResult, so the on-disk files are safe to remove before the
+			// caller is unblocked — AfterCall then observes them already gone when the call returns.
+			ApplyFileCleanup(startArgs);
 			startArgs.FunctionResultCompletionSource.TrySetResult(functionResult);
 			_runningCallPids.TryRemove(metadata.FunctionMarkerTag, out _); // Finished: drop its PID
 			TrackFinishedItemThreadSafe(startArgs, metadata);
 		} catch (Exception ex) {
 			throw new InteroperabilityException(ex, $"Error processing result for {metadata.FunctionMarkerTag}");
+		}
+	}
+
+	/// <summary>
+	/// Deletes, or defers to disposal, a finished call's library-managed <c>{prefix}</c> files per the
+	/// effective <see cref="FunctionFileCleanup"/> (per-call <see cref="CallOptions.Cleanup"/> overriding the
+	/// instance setting). A caller-supplied <see cref="ResultLocationType.CustomPath"/> is never deleted.
+	/// </summary>
+	internal void ApplyFileCleanup(FunctionStartEventArgs startArgs)
+	{
+		FunctionFileCleanup mode = startArgs.CallOptions.Cleanup ?? _bashScript.BashScriptSettings.FunctionFileCleanup;
+		if (mode == FunctionFileCleanup.Never) return;
+		foreach (string file in CollectDeletableFiles(startArgs)) {
+			if (mode == FunctionFileCleanup.AfterCall) TryDeleteFile(file);
+			else _filesToDeleteOnDispose.Add(file); // OnDispose
+		}
+	}
+
+	// The {prefix}.out/.err/.log/.in files the redirection actually wrote, excluding any CustomPath the
+	// caller owns. AbsolutePath converts to the string path implicitly.
+	private static IEnumerable<string> CollectDeletableFiles(FunctionStartEventArgs startArgs)
+	{
+		CallOptions co = startArgs.CallOptions;
+		if (co.HasOutFile() && co.ResultOutFileLocation.LocationType != ResultLocationType.CustomPath) yield return startArgs.OutFilePath;
+		if (co.HasErrFile() && co.ResultErrFileLocation.LocationType != ResultLocationType.CustomPath) yield return startArgs.ErrFilePath;
+		if (co.HasLogFile() && co.ResultLogFileLocation.LocationType != ResultLocationType.CustomPath) yield return startArgs.LogFilePath;
+		if (co.HasInFile() && co.InputFileLocation.LocationType != InputLocationType.TakeFromCustomPath) yield return startArgs.InFilePath;
+	}
+
+	private static void TryDeleteFile(string path)
+	{
+		try {
+			if (File.Exists(path)) File.Delete(path);
+		} catch (Exception) {
+			// Best effort: a leftover {prefix} file on tmpfs is not a call failure.
 		}
 	}
 
@@ -170,6 +219,17 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 		} finally {
 			_runningCallPids.TryRemove(functionMarkerTag, out _);
 		}
+	}
+
+	/// <summary>
+	/// Drops a streamed call the caller stopped following: removes it from the running registry and cancels
+	/// its completion source, so a later end-marker is a no-op and disposal's drain does not wait on it.
+	/// </summary>
+	internal void AbandonCall(FunctionStartEventArgs startArgs)
+	{
+		PopRunningFunctionItemThreadSafe(startArgs.FunctionMarkerTag);
+		_runningCallPids.TryRemove(startArgs.FunctionMarkerTag, out _);
+		startArgs.FunctionResultCompletionSource.TrySetCanceled();
 	}
 
 	private int? ResolveCallPid(string functionMarkerTag)
@@ -334,8 +394,11 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 	private async Task DrainInFlightCallsAsync(TimeSpan drainTimeout)
 	{
 		if (drainTimeout == TimeSpan.Zero) return;
-		var pending = _queueFunctionsToCall.Select(x => x.FunctionResultCompletionSource.Task)
-			.Concat(_queueRunningFunctions.Values.Select(x => x.FunctionResultCompletionSource.Task))
+		// A streamed call completes only when the caller stops following it, not on a result marker, so it
+		// is driven by its enumerator's disposal rather than the drain — excluded here so disposal is not
+		// held for the whole drain timeout waiting on an open-ended follow.
+		var pending = _queueFunctionsToCall.Where(x => !x.IsStreaming).Select(x => x.FunctionResultCompletionSource.Task)
+			.Concat(_queueRunningFunctions.Values.Where(x => !x.IsStreaming).Select(x => x.FunctionResultCompletionSource.Task))
 			.ToArray();
 		if (pending.Length == 0) return;
 		var drain = Task.WhenAll(pending);
@@ -371,5 +434,7 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 			bashProcess.EventHandlerProcessExitedUnexpectedlyAsync -= FailPendingCallsOnUnexpectedExit;
 			bashProcess.Dispose();
 		}
+		// Bash has stopped writing, so clear the files FunctionFileCleanup.OnDispose deferred.
+		while (_filesToDeleteOnDispose.TryTake(out string? file)) TryDeleteFile(file);
 	}
 }

@@ -105,6 +105,22 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	public TimeSpan FunctionTerminationGracePeriod { get; set; } = TimeSpan.FromSeconds(2);
 
 	/// <summary>
+	/// When the <c>{prefix}.out/.err/.log/.in</c> files a call's stream redirection wrote are deleted
+	/// (default <see cref="FunctionFileCleanup.OnDispose"/>). Contents are captured onto the
+	/// <see cref="FunctionResult"/> before any deletion, so cleanup never loses data a caller reads back; a
+	/// caller-supplied <see cref="ResultLocationType.CustomPath"/> file is never deleted. A per-call
+	/// <see cref="CallOptions.Cleanup"/> overrides this for one call.
+	/// </summary>
+	public FunctionFileCleanup FunctionFileCleanup { get; set; } = FunctionFileCleanup.OnDispose;
+
+	/// <summary>
+	/// Idle wait between end-of-file re-checks while <c>StreamFunctionAsync</c> follows a still-running
+	/// producer such as <c>tail -f</c> (default 50ms). A shorter interval lowers latency at higher CPU; a
+	/// finite command is unaffected, since it drains and stops as soon as its result marker arrives.
+	/// </summary>
+	public TimeSpan StreamFollowPollInterval { get; set; } = TimeSpan.FromMilliseconds(50);
+
+	/// <summary>
 	/// How long <see cref="DagNode.NDF.Interoperability.Bash.BashScript.DisposeAsync"/> waits for calls
 	/// already dispatched to finish before it stops the resident bash process anyway (default 30s).
 	/// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> waits without a cap;

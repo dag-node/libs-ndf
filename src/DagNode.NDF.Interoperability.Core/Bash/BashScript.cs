@@ -1,5 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using DagNode.NDF.Interoperability.Model;
 using DagNode.NDF.Interoperability.Model.Bash;
@@ -327,16 +329,20 @@ public class BashScript : IDisposable, IAsyncDisposable
     /// conversions cover <see cref="string"/>, the numeric types, <see cref="bool"/> (exit code 0
     /// means true), an enum (parsed case-insensitively after trimming), and
     /// <see cref="string"/>[]/<see cref="List{T}"/>/<see cref="IEnumerable{T}"/> of string split on
-    /// <paramref name="resultSeparator"/>. Supply <paramref name="resultParser"/> to take over the
-    /// conversion for any type, including a custom bool predicate over stdout rather than the exit code.
+    /// newline. Supply <paramref name="resultParser"/> to take over the conversion for any type, including
+    /// a custom bool predicate over stdout rather than the exit code. For a collection split on a separator
+    /// other than newline, or whose items parse to a type other than <see cref="string"/>, use
+    /// <see cref="CallFunctionEnumerableAsync{TItem}"/>.
     /// </summary>
+    /// <remarks>Safe to call concurrently, but concurrent calls run at the same time in bash: a function
+    /// that reads or writes shared state (a fixed file, an external service) must be reentrant, or the
+    /// caller must serialize those calls. See <see cref="RunFunctionAsync"/>.</remarks>
     /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
     /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
     /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>
     /// <param name="asyncThen">Async hook run just after the function returns.</param>
     /// <param name="callOptions">Stream redirection and where the result is read from; defaults when null.</param>
     /// <param name="resultParser">When set, converts the <see cref="FunctionResult"/> itself, bypassing the built-in switch.</param>
-    /// <param name="resultSeparator">Separator the string-collection conversions split on; "\n" by default.</param>
     /// <param name="timeout">Stops waiting for the result after this duration; null waits indefinitely. See <see cref="RunFunctionAsync"/>.</param>
     /// <param name="cancellationToken">Cancels waiting for the result.</param>
     /// <typeparam name="T">Type the function's output is parsed into.</typeparam>
@@ -347,7 +353,6 @@ public class BashScript : IDisposable, IAsyncDisposable
 	    Func<FunctionStartEventArgs, Task>? asyncBefore = null, Func<FunctionFinishedEventArgs, Task>? asyncThen = null,
 	    CallOptions? callOptions = null,
 	    Func<FunctionResult, T>? resultParser = null,
-	    string resultSeparator = "\n",
 	    TimeSpan? timeout = null,
 	    CancellationToken cancellationToken = default)
     {
@@ -369,12 +374,66 @@ public class BashScript : IDisposable, IAsyncDisposable
             var t when t == typeof(double) => ParseDouble<T>(resultString, functionName),
             var t when t == typeof(decimal) => ParseDecimal<T>(resultString, functionName),
             var t when t == typeof(bool) => (T)(object)(functionResult.ExitCode == 0), // Exit code 0 indicates success
-            var t when t == typeof(string[]) => (T)(object)SplitResult(resultString, resultSeparator),
-            var t when t == typeof(List<string>) => (T)(object)SplitResult(resultString, resultSeparator).ToList(),
-            var t when t == typeof(IEnumerable<string>) => (T)(object)SplitResult(resultString, resultSeparator),
+            var t when t == typeof(string[]) => (T)(object)SplitResult(resultString, "\n"),
+            var t when t == typeof(List<string>) => (T)(object)SplitResult(resultString, "\n").ToList(),
+            var t when t == typeof(IEnumerable<string>) => (T)(object)SplitResult(resultString, "\n"),
             { IsEnum: true } => (T) Enum.Parse(typeof(T), resultString.Trim(), ignoreCase: true),
             _ => throw new NotSupportedException($"The type '{typeof(T)}' is not supported")
         };
+    }
+
+    /// <summary>
+    /// Runs the function, splits its captured output on <paramref name="resultSeparator"/> (newline by
+    /// default, so one record per line), drops the first <paramref name="skipLines"/> records (a header),
+    /// and projects each remaining record with <paramref name="lineParser"/> into
+    /// <typeparamref name="TItem"/>. Projection is deferred — each
+    /// record is parsed as the returned sequence is enumerated, so a <paramref name="lineParser"/> that
+    /// throws surfaces on enumeration, not on the await; materialize with <c>ToList()</c> to pull the whole
+    /// result. With no <paramref name="lineParser"/>, <typeparamref name="TItem"/> must be
+    /// <see cref="string"/>.
+    /// </summary>
+    /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
+    /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
+    /// <param name="resultSeparator">Separator the captured output is split on; "\n" (one record per line) by default. Other delimited outputs split too, e.g. " " for <c>"${arr[@]}"</c> or ":" for a PATH-like value.</param>
+    /// <param name="skipLines">Number of leading records to drop before projecting; 1 skips a classic header row, 0 (default) drops none.</param>
+    /// <param name="lineParser">Projects each record into <typeparamref name="TItem"/>; identity when null (string items only). For a CSV row, split the record on "," inside this delegate.</param>
+    /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>
+    /// <param name="asyncThen">Async hook run just after the function returns.</param>
+    /// <param name="callOptions">Stream redirection and where the result is read from; defaults when null.</param>
+    /// <param name="timeout">Stops waiting for the result after this duration; null waits indefinitely.</param>
+    /// <param name="cancellationToken">Cancels waiting for the result.</param>
+    /// <typeparam name="TItem">Type each record is projected into.</typeparam>
+    /// <returns>The captured output split and lazily projected into <typeparamref name="TItem"/> items.</returns>
+    /// <exception cref="InteroperabilityException">When <paramref name="lineParser"/> is null and <typeparamref name="TItem"/> is not <see cref="string"/>.</exception>
+    /// <exception cref="TimeoutException">When <paramref name="timeout"/> elapses before the result arrives.</exception>
+    public async Task<IEnumerable<TItem>> CallFunctionEnumerableAsync<TItem>(
+	    string functionName, string[]? functionArgs = null,
+	    string resultSeparator = "\n",
+	    int skipLines = 0,
+	    Func<string, TItem>? lineParser = null,
+	    Func<FunctionStartEventArgs, Task>? asyncBefore = null, Func<FunctionFinishedEventArgs, Task>? asyncThen = null,
+	    CallOptions? callOptions = null,
+	    TimeSpan? timeout = null,
+	    CancellationToken cancellationToken = default)
+    {
+	    Func<string, TItem> parseItem = lineParser ?? StringIdentityParser<TItem>();
+	    callOptions ??= CallOptions.CreateFactoryDefault;
+	    FunctionResult functionResult = await RunFunctionAsync(functionName, functionArgs,
+		    asyncBefore, asyncThen, callOptions, timeout, cancellationToken).ConfigureAwait(false);
+	    string? str = GetResultStringFromFunctionResult(functionResult, callOptions.ReadResultFrom);
+	    if (str == null) throw new InteroperabilityException("Function result is null");
+	    // Not materialized: each record is projected as the caller enumerates. ToList() to pull them all.
+	    return SplitResult(str, resultSeparator).Skip(skipLines).Select(parseItem);
+    }
+
+    // Fail closed: without a lineParser only string segments can be produced, so a non-string TItem is a
+    // caller error named at the point it is requested rather than an invalid cast deep in enumeration.
+    private static Func<string, TItem> StringIdentityParser<TItem>()
+    {
+	    if (typeof(TItem) != typeof(string))
+		    throw new InteroperabilityException(
+			    $"A lineParser is required to produce '{typeof(TItem)}' items; without one only string items are produced");
+	    return static s => (TItem)(object)s;
     }
 
     private static string[] SplitResult(string resultString, string resultSeparator) =>
@@ -396,10 +455,20 @@ public class BashScript : IDisposable, IAsyncDisposable
     /// <summary>
     /// Dispatches the function and returns its <see cref="FunctionResult"/> once the marker line for
     /// this call arrives on stdout. <paramref name="timeout"/> and <paramref name="cancellationToken"/>
-    /// bound the wait, not the bash function: on either, the wait ends but the function keeps running
-    /// in bash. Terminating the function itself through its per-call PID file is a planned enhancement.
-    /// Inspect the result through <see cref="EventHandlerFunctionFinishedAsync"/>.
+    /// bound the wait; on either, the wait ends and the function's own process tree is terminated too,
+    /// unless <see cref="BashScriptSettings.TerminateFunctionProcessTreeOnTimeout"/> is off, in which
+    /// case the function keeps running in bash. Inspect the result through
+    /// <see cref="EventHandlerFunctionFinishedAsync"/>.
     /// </summary>
+    /// <remarks>
+    /// Calls execute concurrently. Each runs in its own bash subshell (one subprocess per call) with its
+    /// own isolated {prefix} stream files and a marker-matched result, so dispatching several calls at once
+    /// — without awaiting the previous one — is safe and every caller gets its own result. The library does
+    /// not serialize the functions themselves: two concurrent calls to a function that reads or writes state
+    /// shared outside its subshell — a fixed file, a database, an external service, a device — run at the
+    /// same time and can interleave or corrupt that state. Such a function must be reentrant, or the caller
+    /// must serialize those calls (await each before issuing the next, or guard them with its own lock).
+    /// </remarks>
     /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
     /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
     /// <param name="asyncBefore">Async hook run just before the function is dispatched.</param>
@@ -417,45 +486,14 @@ public class BashScript : IDisposable, IAsyncDisposable
 	    TimeSpan? timeout = null,
 	    CancellationToken cancellationToken = default)
     {
-	    Validation.CheckFunctionName(functionName);
-	    cancellationToken.ThrowIfCancellationRequested();
-
 	    // An explicit per-call timeout wins; otherwise fall back to the instance default. Either form
 	    // of "no timeout" (unset default or Timeout.InfiniteTimeSpan) collapses to null = wait forever.
 	    TimeSpan? effectiveTimeout = timeout ?? BashScriptSettings.DefaultFunctionCallTimeout;
 	    if (effectiveTimeout == Timeout.InfiniteTimeSpan) effectiveTimeout = null;
 
 	    var callOptions = options ?? CallOptions.CreateFactoryDefault;
-
-	    // Assign the same sequence number to files generated by the function, thread safe
-	    long sequenceNumber = this.GetIncrementedFunctionCallSequenceNumber(functionName);
-
-	    string functionMarkerTag = FunctionWorkDirSettings.ConfigureFunctionMarkerTag(
-		    new ConfigureFunctionMarkerEventArgs( // Using sequence number in function marker tag (thread safe)
-				functionName.ToAsciiNoWhitespace(), sequenceNumber, this.InstanceMarkerTag,
-				this.BashScriptSettings, this.FunctionWorkDirSettings));
-	    
-	    if (!Directory.Exists(_configuredFunctionWorkDir)) throw new InteroperabilityException($"Function directory {_configuredFunctionWorkDir} does not exist");
-	    var functionFiles = FunctionFiles // Configure {prefix}.in {prefix}.out {prefix}.err file paths
-		    .ConfigureFilePaths(_configuredFunctionWorkDir, callOptions, functionMarkerTag);
-	    
-	    var functionStartEventArgs = new FunctionStartEventArgs(
-		    callOptions, _configuredFunctionWorkDir, functionFiles,
-		    functionName, functionMarkerTag, sequenceNumber, functionArgs
-		    //timeout
-		    );
-		
-	    // Run optional hooks
-	    if (asyncBefore != null) await asyncBefore(functionStartEventArgs).ConfigureAwait(false); // Optional function-specific hook
-	    if (EventHandlerFunctionStartAsync != null) {
-		    // Invoked for all functions
-		    await EventHandlerFunctionStartAsync.Invoke(this, functionStartEventArgs).ConfigureAwait(false);
-		}
-	    
-		// Enqueue function call
-		// Construct function call command started by bash, moved to FunctionProcessor.RunEnqueuedFunctionCallsAsync
-		// string bashProcessArgs = $"{BashProcess.FUNCTION_START_ASYNC_WRAPPER} {functionMarkerTag} "{redirectionCmd}" {functionName} \"{prefixPath}\" {quotedFunctionArgs}";
-		_functionProcessor.EnqueueCallFunctionItemThreadSafe(functionStartEventArgs);
+	    FunctionStartEventArgs functionStartEventArgs =
+		    await DispatchAsync(functionName, functionArgs, callOptions, asyncBefore, isStreaming: false, cancellationToken).ConfigureAwait(false);
 
 		// Wait for the result FunctionProcessor sets when the call's marker line arrives. netstandard2.1
 		// has no Task.WaitAsync(token), so cancel the wait by registering on the completion source: the
@@ -476,6 +514,151 @@ public class BashScript : IDisposable, IAsyncDisposable
 	    }
 		
 	    return result;
+    }
+
+    // Builds a call's per-call state, runs the start hooks, and enqueues it, returning its start args.
+    // Shared by RunFunctionAsync (which then awaits the result marker) and StreamFunctionAsync (which
+    // follows the result file). isStreaming marks the call so the processor leaves its file unread and
+    // uncleaned.
+    private async Task<FunctionStartEventArgs> DispatchAsync(
+	    string functionName, string[]? functionArgs, CallOptions callOptions,
+	    Func<FunctionStartEventArgs, Task>? asyncBefore, bool isStreaming, CancellationToken cancellationToken)
+    {
+	    Validation.CheckFunctionName(functionName);
+	    cancellationToken.ThrowIfCancellationRequested();
+
+	    // Assign the same sequence number to files generated by the function, thread safe
+	    long sequenceNumber = this.GetIncrementedFunctionCallSequenceNumber(functionName);
+	    string functionMarkerTag = FunctionWorkDirSettings.ConfigureFunctionMarkerTag(
+		    new ConfigureFunctionMarkerEventArgs( // Using sequence number in function marker tag (thread safe)
+			    functionName.ToAsciiNoWhitespace(), sequenceNumber, this.InstanceMarkerTag,
+			    this.BashScriptSettings, this.FunctionWorkDirSettings));
+
+	    if (!Directory.Exists(_configuredFunctionWorkDir)) throw new InteroperabilityException($"Function directory {_configuredFunctionWorkDir} does not exist");
+	    var functionFiles = FunctionFiles // Configure {prefix}.in {prefix}.out {prefix}.err file paths
+		    .ConfigureFilePaths(_configuredFunctionWorkDir, callOptions, functionMarkerTag);
+
+	    var functionStartEventArgs = new FunctionStartEventArgs(
+		    callOptions, _configuredFunctionWorkDir, functionFiles,
+		    functionName, functionMarkerTag, sequenceNumber, functionArgs) { IsStreaming = isStreaming };
+
+	    // Run optional hooks
+	    if (asyncBefore != null) await asyncBefore(functionStartEventArgs).ConfigureAwait(false); // Optional function-specific hook
+	    if (EventHandlerFunctionStartAsync != null) {
+		    // Invoked for all functions
+		    await EventHandlerFunctionStartAsync.Invoke(this, functionStartEventArgs).ConfigureAwait(false);
+	    }
+
+	    _functionProcessor.EnqueueCallFunctionItemThreadSafe(functionStartEventArgs);
+	    return functionStartEventArgs;
+    }
+
+    /// <summary>
+    /// Dispatches the function and streams its output line by line as it is produced, so a large or
+    /// open-ended producer (<c>tail -f</c>, <c>cat bigfile</c>) is read with bounded memory instead of
+    /// buffered whole. Reads the file named by <paramref name="callOptions"/>'s <c>ReadResultFrom</c>
+    /// (<c>{prefix}.out</c> by default), following it past end-of-file — polling every
+    /// <see cref="BashScriptSettings.StreamFollowPollInterval"/> — until the call finishes (a finite command)
+    /// or the caller stops enumerating. Each newline-terminated record is projected with
+    /// <paramref name="lineParser"/> into <typeparamref name="TItem"/>; a partial trailing line is held until
+    /// its newline arrives. Breaking the <c>await foreach</c> or cancelling terminates the bash function's
+    /// process tree so a <c>tail -f</c> actually stops, then the file is cleaned per the effective
+    /// <see cref="FunctionFileCleanup"/>. With no <paramref name="lineParser"/>, <typeparamref name="TItem"/>
+    /// must be <see cref="string"/>.
+    /// </summary>
+    /// <param name="functionName">Name of the bash function to execute, present in this instance's script.</param>
+    /// <param name="functionArgs">Arguments passed to the function; each is quoted, so spaces are safe.</param>
+    /// <param name="skipLines">Number of leading records to drop before projecting; 1 skips a header row.</param>
+    /// <param name="lineParser">Projects each record into <typeparamref name="TItem"/>; identity when null (string items only).</param>
+    /// <param name="callOptions">Stream redirection and which file is followed; defaults when null.</param>
+    /// <param name="cancellationToken">Stops following and terminates the function's process tree.</param>
+    /// <typeparam name="TItem">Type each record is projected into.</typeparam>
+    /// <returns>The output's records, projected and yielded as the function writes them.</returns>
+    /// <exception cref="InteroperabilityException">When <paramref name="lineParser"/> is null and <typeparamref name="TItem"/> is not <see cref="string"/>.</exception>
+    public async IAsyncEnumerable<TItem> StreamFunctionAsync<TItem>(
+	    string functionName, string[]? functionArgs = null,
+	    int skipLines = 0,
+	    Func<string, TItem>? lineParser = null,
+	    CallOptions? callOptions = null,
+	    [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+	    Func<string, TItem> parseItem = lineParser ?? StringIdentityParser<TItem>();
+	    callOptions ??= CallOptions.CreateFactoryDefault;
+	    FunctionStartEventArgs startArgs =
+		    await DispatchAsync(functionName, functionArgs, callOptions, null, isStreaming: true, cancellationToken).ConfigureAwait(false);
+	    Task completion = startArgs.FunctionResultCompletionSource.Task;
+	    string filePath = ResolveStreamFilePath(startArgs, callOptions);
+	    TimeSpan poll = BashScriptSettings.StreamFollowPollInterval;
+	    int skipped = 0;
+	    try {
+		    await foreach (string line in FollowLinesAsync(filePath, completion, poll, cancellationToken).ConfigureAwait(false)) {
+			    if (skipped < skipLines) { skipped++; continue; }
+			    yield return parseItem(line);
+		    }
+	    } finally {
+		    // A finite producer already set completion; a still-running one (tail -f) is terminated so it
+		    // stops, and its now-orphaned call is dropped from the running registry. The file is cleaned per
+		    // the configured mode (AfterCall deletes now, OnDispose defers, Never keeps).
+		    if (!completion.IsCompleted) {
+			    await _functionProcessor.TerminateCallAsync(startArgs.FunctionMarkerTag, BashScriptSettings.FunctionTerminationGracePeriod).ConfigureAwait(false);
+			    _functionProcessor.AbandonCall(startArgs);
+		    }
+		    _functionProcessor.ApplyFileCleanup(startArgs);
+	    }
+    }
+
+    private static string ResolveStreamFilePath(FunctionStartEventArgs startArgs, CallOptions callOptions) =>
+	    callOptions.ReadResultFrom.LocationType switch {
+		    ResultLocationType.PrefixErr => startArgs.ErrFilePath,
+		    ResultLocationType.PrefixLog => startArgs.LogFilePath,
+		    ResultLocationType.CustomPath => callOptions.ReadResultFrom.CustomPath!,
+		    _ => startArgs.OutFilePath // Default / PrefixOut
+	    };
+
+    // Follows a file to end-of-file and past it: at EOF, stops once the producer has completed (draining any
+    // final bytes and emitting a trailing partial line), otherwise waits poll and re-reads what was appended.
+    // Only newline-terminated records are emitted while following, so a half-written line is never split.
+    private static async IAsyncEnumerable<string> FollowLinesAsync(
+	    string filePath, Task completion, TimeSpan poll,
+	    [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+	    // Bash creates the file on its first write; wait for it, but give up if the call ends without one.
+	    while (!File.Exists(filePath)) {
+		    if (cancellationToken.IsCancellationRequested || completion.IsCompleted) yield break;
+		    await Task.Delay(poll, cancellationToken).ConfigureAwait(false);
+	    }
+	    using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+	    using var reader = new StreamReader(stream);
+	    var pending = new StringBuilder();
+	    var buffer = new char[4096];
+	    while (true) {
+		    int read = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+		    if (read > 0) {
+			    foreach (string line in ExtractLines(buffer, read, pending)) yield return line;
+			    continue;
+		    }
+		    // EOF.
+		    if (completion.IsCompleted) {
+			    int tail;
+			    while ((tail = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0) {
+				    foreach (string line in ExtractLines(buffer, tail, pending)) yield return line;
+			    }
+			    if (pending.Length > 0) yield return pending.ToString().TrimEnd('\r');
+			    yield break;
+		    }
+		    if (cancellationToken.IsCancellationRequested) yield break;
+		    await Task.Delay(poll, cancellationToken).ConfigureAwait(false);
+	    }
+    }
+
+    // Splits newly read chars on '\n', emitting completed lines and keeping the trailing partial in pending.
+    private static IEnumerable<string> ExtractLines(char[] buffer, int count, StringBuilder pending)
+    {
+	    for (int i = 0; i < count; i++) {
+		    char c = buffer[i];
+		    if (c == '\n') { yield return pending.ToString().TrimEnd('\r'); pending.Clear(); }
+		    else pending.Append(c);
+	    }
     }
 
     /// <summary>

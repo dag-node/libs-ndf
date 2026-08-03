@@ -85,8 +85,17 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 	{
 		IFunctionResultMetadata metadata = args.Metadata;
 		try {
-			// Get/Remove FunctionStartEventArgs from the running functions queue 
+			// Get/Remove FunctionStartEventArgs from the running functions queue
 			FunctionStartEventArgs startArgs = PopRunningFunctionItemThreadSafe(metadata.FunctionMarkerTag);
+			if (startArgs is null) return; // Already abandoned — e.g. a streamed call the caller terminated.
+			if (startArgs.IsStreaming) {
+				// The stream follows and cleans the result file itself; here just record completion so a
+				// finite producer's follow loop knows to drain and stop, carrying only the exit code.
+				startArgs.FunctionResultCompletionSource.TrySetResult(new FunctionResult(metadata.ExitCode, null, null, null, null, null));
+				_runningCallPids.TryRemove(metadata.FunctionMarkerTag, out _);
+				TrackFinishedItemThreadSafe(startArgs, metadata);
+				return;
+			}
 			CallOptions callOptions = startArgs.CallOptions; // Call options from start args
 
 			// Read function results from locations specified in call options
@@ -119,7 +128,7 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 	/// effective <see cref="FunctionFileCleanup"/> (per-call <see cref="CallOptions.Cleanup"/> overriding the
 	/// instance setting). A caller-supplied <see cref="ResultLocationType.CustomPath"/> is never deleted.
 	/// </summary>
-	private void ApplyFileCleanup(FunctionStartEventArgs startArgs)
+	internal void ApplyFileCleanup(FunctionStartEventArgs startArgs)
 	{
 		FunctionFileCleanup mode = startArgs.CallOptions.Cleanup ?? _bashScript.BashScriptSettings.FunctionFileCleanup;
 		if (mode == FunctionFileCleanup.Never) return;
@@ -210,6 +219,17 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 		} finally {
 			_runningCallPids.TryRemove(functionMarkerTag, out _);
 		}
+	}
+
+	/// <summary>
+	/// Drops a streamed call the caller stopped following: removes it from the running registry and cancels
+	/// its completion source, so a later end-marker is a no-op and disposal's drain does not wait on it.
+	/// </summary>
+	internal void AbandonCall(FunctionStartEventArgs startArgs)
+	{
+		PopRunningFunctionItemThreadSafe(startArgs.FunctionMarkerTag);
+		_runningCallPids.TryRemove(startArgs.FunctionMarkerTag, out _);
+		startArgs.FunctionResultCompletionSource.TrySetCanceled();
 	}
 
 	private int? ResolveCallPid(string functionMarkerTag)
@@ -374,8 +394,11 @@ public class FunctionProcessor : IDisposable, IAsyncDisposable
 	private async Task DrainInFlightCallsAsync(TimeSpan drainTimeout)
 	{
 		if (drainTimeout == TimeSpan.Zero) return;
-		var pending = _queueFunctionsToCall.Select(x => x.FunctionResultCompletionSource.Task)
-			.Concat(_queueRunningFunctions.Values.Select(x => x.FunctionResultCompletionSource.Task))
+		// A streamed call completes only when the caller stops following it, not on a result marker, so it
+		// is driven by its enumerator's disposal rather than the drain — excluded here so disposal is not
+		// held for the whole drain timeout waiting on an open-ended follow.
+		var pending = _queueFunctionsToCall.Where(x => !x.IsStreaming).Select(x => x.FunctionResultCompletionSource.Task)
+			.Concat(_queueRunningFunctions.Values.Where(x => !x.IsStreaming).Select(x => x.FunctionResultCompletionSource.Task))
 			.ToArray();
 		if (pending.Length == 0) return;
 		var drain = Task.WhenAll(pending);

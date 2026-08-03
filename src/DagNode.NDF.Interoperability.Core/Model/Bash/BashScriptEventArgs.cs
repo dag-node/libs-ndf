@@ -33,6 +33,10 @@ public class FunctionStartEventArgs(CallOptions callOptions, AbsolutePath prefix
 	/// </summary>
 	public TaskCompletionSource<FunctionResult> FunctionResultCompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+	/// <summary>Set for a <c>StreamFunctionAsync</c> call: the processor records only the exit code and
+	/// leaves the result file unread and uncleaned, because the stream follows and disposes it itself.</summary>
+	internal bool IsStreaming { get; set; }
+
 	//TODO: To implement function call timeouts, we need to keep track of spawned subprocess PIDs
 	//public TimeSpan? Timeout { get; set; } = timeout;
 

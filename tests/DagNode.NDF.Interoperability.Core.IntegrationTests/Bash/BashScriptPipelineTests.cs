@@ -43,6 +43,9 @@ public class BashScriptPipelineTests
 		function answer_yes() { echo yes; }
 		function slow_echo() { sleep "$2"; echo drained; }
 		function kill_bash() { kill -s KILL -- -$$; }
+		function stream_lines() { for i in $(seq 1 5); do echo "line-$i"; done; }
+		function stream_follow() { local i=0; while true; do i=$((i+1)); echo "tick-$i"; sleep 0.05; done; }
+		function follow_file() { stdbuf -oL tail -n +1 -f "$2"; }
 		""";
 
 	private static async Task<BashScript> CreateAsync(TemporaryDirectory scripts)
@@ -167,6 +170,74 @@ public class BashScriptPipelineTests
 			await using var bash = await CreateAsync(scripts);
 			Assert.AreEqual(42, await bash.CallFunctionAsync<int>("get_int"), $"cycle {i}");
 		}
+	}
+
+	[TestMethod]
+	public async Task StreamFunctionYieldsFiniteOutputLineByLine()
+	{
+		using var scripts = new TemporaryDirectory("api-stream");
+		await using var bash = await CreateAsync(scripts);
+
+		var lines = new List<string>();
+		await foreach (string line in bash.StreamFunctionAsync<string>("stream_lines")) lines.Add(line);
+		CollectionAssert.AreEqual(new[] { "line-1", "line-2", "line-3", "line-4", "line-5" }, lines);
+
+		// Typed projection and skipLines stream as well.
+		var nums = new List<int>();
+		await foreach (int n in bash.StreamFunctionAsync("get_nums", skipLines: 1, lineParser: int.Parse)) nums.Add(n);
+		CollectionAssert.AreEqual(new[] { 2, 3 }, nums);
+	}
+
+	[TestMethod]
+	public async Task StreamFunctionFollowsAliveProducerAndTerminatesOnBreak()
+	{
+		using var scripts = new TemporaryDirectory("api-stream-follow");
+		await using var bash = await CreateAsync(scripts);
+
+		// stream_follow never ends on its own (like tail -f); reaching three ticks and breaking proves the
+		// output is yielded as produced (a wait-for-marker design would hang here), and the await foreach
+		// disposing terminates the still-running function's process tree instead of leaking it.
+		var ticks = new List<string>();
+		await foreach (string line in bash.StreamFunctionAsync<string>("stream_follow")) {
+			ticks.Add(line);
+			if (ticks.Count >= 3) break;
+		}
+		Assert.AreEqual(3, ticks.Count);
+		Assert.IsTrue(ticks[0].StartsWith("tick-", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	public async Task StreamFunctionFollowsRealTailF()
+	{
+		using var scripts = new TemporaryDirectory("api-tailf");
+		string scriptPath = scripts.WriteFile("api.sh", Script + "\n");
+		await using var bash = await BashScript.CreateAsync(new BashScriptSettings(AbsolutePath.Create(scriptPath)));
+
+		// A real file that a background writer appends to while the streamed function `tail -f`s it. The
+		// function uses `stdbuf -oL tail` so tail line-buffers into its redirected {prefix}.out (otherwise it
+		// block-buffers to a non-tty and the stream would see nothing until ~4KB). `tail -n +1 -f` reads from
+		// the first line and then follows, so the records arrive in order regardless of the startup timing.
+		string feed = Path.Combine(scripts.Path, "feed.txt");
+		File.WriteAllText(feed, ""); // tail -f needs the file to exist when it opens
+
+		using var writerCts = new CancellationTokenSource();
+		Task writer = Task.Run(async () => {
+			for (int i = 1; i <= 50 && !writerCts.IsCancellationRequested; i++) {
+				await File.AppendAllTextAsync(feed, $"append-{i}\n", writerCts.Token).ConfigureAwait(false);
+				try { await Task.Delay(30, writerCts.Token).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
+			}
+		});
+
+		var captured = new List<string>();
+		await foreach (string line in bash.StreamFunctionAsync<string>("follow_file", [feed])) {
+			captured.Add(line);
+			if (captured.Count >= 5) break; // stop following: terminates tail -f's process tree
+		}
+
+		writerCts.Cancel();
+		try { await writer; } catch { /* cancelled */ }
+
+		CollectionAssert.AreEqual(new[] { "append-1", "append-2", "append-3", "append-4", "append-5" }, captured);
 	}
 
 	private static int CountResultFiles(string workDir) =>

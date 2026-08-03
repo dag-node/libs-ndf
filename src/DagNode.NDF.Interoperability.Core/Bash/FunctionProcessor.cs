@@ -6,8 +6,10 @@ using DagNode.NDF.Interoperability.Model.Bash;
 
 namespace DagNode.NDF.Interoperability.Bash;
 
-public class FunctionProcessor : IDisposable
+public class FunctionProcessor : IDisposable, IAsyncDisposable
 {
+	private bool _disposed;
+
 	public ParallelProcessType ParallelOptions { get => ParallelProcessType.SubprocessPerFunctionCall; }
 	public BashProcess GetBashProcess()
 	{
@@ -22,6 +24,9 @@ public class FunctionProcessor : IDisposable
 	private readonly ConcurrentQueue<FunctionStartEventArgs> _queueFunctionsToCall = new();
 	private readonly ConcurrentDictionary<string, FunctionStartEventArgs> _queueRunningFunctions = new();
 	private readonly ConcurrentDictionary<long, IFunctionResultMetadata> _queueFinishedFunctions = new();
+	// Marker tag -> the backgrounded call's root PID, reported by ___BEGIN_FN__. Lock-free; the hot path
+	// (dispatch, result) touches only concurrent collections. Read on the rare termination path.
+	private readonly ConcurrentDictionary<string, int> _runningCallPids = new();
 
 	#region Interlocked properties
 
@@ -60,6 +65,7 @@ public class FunctionProcessor : IDisposable
 		// Register handlers
 		bashProcess.EventHandlerFunctionResultReadyAsync += ProcessResult;
 		bashProcess.EventHandlerErrorStreamReceivedAsync += HandleError;
+		bashProcess.EventHandlerFunctionPidReadyAsync += RecordFunctionPid;
 		return bashProcess;
 	}
 
@@ -91,8 +97,11 @@ public class FunctionProcessor : IDisposable
 			}
 			var functionResult = new FunctionResult(metadata.ExitCode, inputIn, standardOutput, standardError, customLog, customFile);
 			
-			// Set task completion source result, so the RunFunction method can return function result
-			startArgs.FunctionResultCompletionSource.SetResult(functionResult);
+			// TrySetResult, not SetResult: the caller may have cancelled its wait (RunFunctionAsync
+			// links the per-call token onto this source), leaving it already completed. The function
+			// still ran, so record the result for the trace and drop it for the caller.
+			startArgs.FunctionResultCompletionSource.TrySetResult(functionResult);
+			_runningCallPids.TryRemove(metadata.FunctionMarkerTag, out _); // Finished: drop its PID
 			TrackFinishedItemThreadSafe(startArgs, metadata);
 		} catch (Exception ex) {
 			throw new InteroperabilityException(ex, $"Error processing result for {metadata.FunctionMarkerTag}");
@@ -117,22 +126,69 @@ public class FunctionProcessor : IDisposable
 		}
 	}
 	
-	internal async Task StartAsync()
+	/// <summary>
+	/// Records a call's root PID from its <c>___BEGIN_FN__</c> marker, but only while the call is still
+	/// running: a marker that races behind a very fast call's <c>___END_FN__</c> is dropped so the
+	/// registry does not leak a PID whose call already finished.
+	/// </summary>
+	private Task RecordFunctionPid(BashProcess sender, FunctionPidReadyEventArgs args)
 	{
-		await _isCallingFunctionsLock.WaitAsync(_cts.Token).ConfigureAwait(false);
+		if (_queueRunningFunctions.ContainsKey(args.FunctionMarkerTag)) {
+			_runningCallPids[args.FunctionMarkerTag] = args.Pid;
+		}
+		return Task.CompletedTask;
+	}
+
+	/// <summary>
+	/// Terminates one call's process tree (SIGTERM, <paramref name="gracePeriod"/>, SIGKILL) when its
+	/// wait ends early. The root PID comes from the in-memory registry, falling back to the tmpfs pid
+	/// file when <c>___BEGIN_FN__</c> has not been parsed yet. An unknown or already-removed PID (the
+	/// call finished) is a no-op.
+	/// </summary>
+	public async Task TerminateCallAsync(string functionMarkerTag, TimeSpan gracePeriod, CancellationToken cancellationToken = default)
+	{
+		int? rootPid = ResolveCallPid(functionMarkerTag);
+		if (rootPid is null) return;
+		try {
+			await ProcessTree.TerminateTreeAsync(rootPid.Value, gracePeriod, cancellationToken).ConfigureAwait(false);
+		} finally {
+			_runningCallPids.TryRemove(functionMarkerTag, out _);
+		}
+	}
+
+	private int? ResolveCallPid(string functionMarkerTag)
+	{
+		if (_runningCallPids.TryGetValue(functionMarkerTag, out int pid)) return pid;
+		// Fallback: the pid file on tmpfs. Absent means the call already finished (the subshell removes
+		// it on completion), so there is nothing to terminate.
+		string pidFilePath = Path.Combine(FunctionWorkDirSettings.FunctionBasePidDir, $"{functionMarkerTag}.pid");
+		try {
+			return File.Exists(pidFilePath) && int.TryParse(File.ReadAllText(pidFilePath).Trim(), out int filePid)
+				? filePid : (int?)null;
+		} catch (Exception) {
+			return null;
+		}
+	}
+
+	internal async Task StartAsync(CancellationToken cancellationToken = default)
+	{
+		// Link the caller's startup token with the instance lifetime so either ends startup, then hand
+		// the linked source to the CTS-based plumbing (mount, sourcing) below.
+		using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, cancellationToken);
+		await _isCallingFunctionsLock.WaitAsync(linkedCts.Token).ConfigureAwait(false);
 		try {
 			if (_IsCallingFunctions) return;
 			_IsCallingFunctions = true;
 		} finally {
 			_isCallingFunctionsLock.Release();
 		}
-		
+
 		// Mount in-memory temporary filesystem
-		await LinuxUtils.MountTmpfsBsAsync(_logger, _cts).ConfigureAwait(false);
+		await LinuxUtils.MountTmpfsBsAsync(_logger, linkedCts).ConfigureAwait(false);
 
 		// Source all script files to become available for all bash processes from the pool
-		await SourceScriptFilesAsync().ConfigureAwait(false);
-		
+		await SourceScriptFilesAsync(cancellationToken).ConfigureAwait(false);
+
 		try {
 			// Main loop, non-blocking
 			var runFunctions = Task.Run(async () => {
@@ -169,19 +225,22 @@ public class FunctionProcessor : IDisposable
 			_queueFinishedFunctions.OrderByDescending(x => x.Key)
 				.Select(kv => $"{kv.Key}.: {kv.Value.ExitCode} at {kv.Value.FunctionEndTimeUtc:yyyyMMdd HH:mm:ss-fff} from {kv.Value.FunctionMarkerTag} in {kv.Value.Duration.ToReadable()}"));
 
-	public async Task<bool> SourceScriptFilesAsync()
+	public async Task<bool> SourceScriptFilesAsync(CancellationToken cancellationToken = default)
 	{
 		try {
+			// The BashProcess.Source* methods take a CTS (they cancel it on error); link the caller's
+			// token with the instance lifetime and pass the linked source down.
+			using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, cancellationToken);
 			// Initialize all bash processes from the pool
 			foreach (BashProcess bashProcess in _pool) {
 				// Source main function call wrapper function
-				await bashProcess.SourceMainFunctionWrapperAsync(_cts).ConfigureAwait(false);
+				await bashProcess.SourceMainFunctionWrapperAsync(linkedCts).ConfigureAwait(false);
 				// Additionally source all user-provided global function scripts
-				await bashProcess.SourceGlobalFunctionsAsync(_bashScript.BashScriptSettings.GlobalFunctionScriptFilePaths, _cts).ConfigureAwait(false);
+				await bashProcess.SourceGlobalFunctionsAsync(_bashScript.BashScriptSettings.GlobalFunctionScriptFilePaths, linkedCts).ConfigureAwait(false);
 				// Source bash script
-				await bashProcess.SourceScriptFileAsync(_bashScript.ScriptFilePath, _cts).ConfigureAwait(false);
+				await bashProcess.SourceScriptFileAsync(_bashScript.ScriptFilePath, linkedCts).ConfigureAwait(false);
 			}
-			
+
 			return true;
 		} catch (Exception ex) {
 			throw new InteroperabilityException(ex, "Error sourcing script files");
@@ -238,12 +297,62 @@ public class FunctionProcessor : IDisposable
 	
 	#endregion Types
 	
+	/// <summary>
+	/// Graceful shutdown: waits for calls already queued or running to finish, bounded by
+	/// <see cref="BashScriptSettings.DisposeDrainTimeout"/>, then stops the bash processes.
+	/// </summary>
+	public async ValueTask DisposeAsync()
+	{
+		if (_disposed) return;
+		await DrainInFlightCallsAsync(_bashScript.BashScriptSettings.DisposeDrainTimeout).ConfigureAwait(false);
+		Dispose();
+	}
+
+	/// <summary>
+	/// Awaits the completion sources of every queued or running call so a caller disposing
+	/// asynchronously sees them finish. The dispatch loop and result readers run on the instance
+	/// lifetime token, which the caller cancels only after this returns, so the calls can still
+	/// complete. Bounded by <paramref name="drainTimeout"/>: <see cref="Timeout.InfiniteTimeSpan"/>
+	/// waits without a cap, <see cref="TimeSpan.Zero"/> returns immediately.
+	/// </summary>
+	private async Task DrainInFlightCallsAsync(TimeSpan drainTimeout)
+	{
+		if (drainTimeout == TimeSpan.Zero) return;
+		var pending = _queueFunctionsToCall.Select(x => x.FunctionResultCompletionSource.Task)
+			.Concat(_queueRunningFunctions.Values.Select(x => x.FunctionResultCompletionSource.Task))
+			.ToArray();
+		if (pending.Length == 0) return;
+		var drain = Task.WhenAll(pending);
+		if (drainTimeout == Timeout.InfiniteTimeSpan) {
+			await SwallowAsync(drain).ConfigureAwait(false);
+			return;
+		}
+		using var timeoutCts = new CancellationTokenSource(drainTimeout);
+		// Whichever finishes first: every call completing, or the drain budget elapsing.
+		await SwallowAsync(Task.WhenAny(drain, Task.Delay(Timeout.Infinite, timeoutCts.Token))).ConfigureAwait(false);
+		if (drain.IsCompleted) await SwallowAsync(drain).ConfigureAwait(false); // Observe faults/cancellations
+	}
+
+	// A call that cancelled or faulted while draining is not a shutdown failure, so its exception is
+	// observed and dropped rather than propagated out of DisposeAsync.
+	private static async Task SwallowAsync(Task task)
+	{
+		try {
+			await task.ConfigureAwait(false);
+		} catch {
+			// Intentionally ignored during shutdown.
+		}
+	}
+
 	public void Dispose()
 	{
+		if (_disposed) return;
+		_disposed = true;
 		foreach (BashProcess bashProcess in _pool) {
 			bashProcess.EventHandlerFunctionResultReadyAsync -= ProcessResult;
 			bashProcess.EventHandlerErrorStreamReceivedAsync -= HandleError;
-			bashProcess.Dispose();	
+			bashProcess.EventHandlerFunctionPidReadyAsync -= RecordFunctionPid;
+			bashProcess.Dispose();
 		}
 	}
 }

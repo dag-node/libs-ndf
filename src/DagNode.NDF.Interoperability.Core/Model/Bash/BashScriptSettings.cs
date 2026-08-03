@@ -81,6 +81,39 @@ public class BashScriptSettings // : IConfigurable<BashScriptSettings>
 	public bool UseInstanceMarkerTag { get; set; } = true;
 
 	/// <summary>
+	/// Default wait applied to <em>one function call</em> when <c>RunFunctionAsync</c>/<c>CallFunctionAsync</c>
+	/// is not given an explicit <c>timeout</c> (default <see cref="System.Threading.Timeout.InfiniteTimeSpan"/>,
+	/// i.e. wait indefinitely, which suits a long-lived session whose calls run for minutes). This is
+	/// per call, not for the whole script/session: the sourced session has no timeout and lives until
+	/// the instance is disposed. An explicit per-call <c>timeout</c> overrides this; pass
+	/// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> there to opt one call out of a finite
+	/// default. Bounds the wait for the result, not the bash function itself.
+	/// </summary>
+	public TimeSpan DefaultFunctionCallTimeout { get; set; } = Timeout.InfiniteTimeSpan;
+
+	/// <summary>
+	/// When a call's wait ends early through timeout or caller cancellation, terminate the bash
+	/// function's process tree rather than only abandoning the wait (default true). Ignored when the
+	/// wait ends through instance disposal, which reaps the whole session instead.
+	/// </summary>
+	public bool TerminateFunctionProcessTreeOnTimeout { get; set; } = true;
+
+	/// <summary>
+	/// Grace period between the SIGTERM and the SIGKILL sent to a terminated call's process tree
+	/// (default 2s), letting the function's own signal handlers run before it is force-killed.
+	/// </summary>
+	public TimeSpan FunctionTerminationGracePeriod { get; set; } = TimeSpan.FromSeconds(2);
+
+	/// <summary>
+	/// How long <see cref="DagNode.NDF.Interoperability.Bash.BashScript.DisposeAsync"/> waits for calls
+	/// already dispatched to finish before it stops the resident bash process anyway (default 30s).
+	/// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> waits without a cap;
+	/// <see cref="System.TimeSpan.Zero"/> disposes without draining. Ignored by the synchronous
+	/// <see cref="DagNode.NDF.Interoperability.Bash.BashScript.Dispose"/>, which never drains.
+	/// </summary>
+	public TimeSpan DisposeDrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+	/// <summary>
 	/// Basic configuration of the bash script runner.
 	/// </summary>
 	/// <param name="scriptFileName">Filename of the bash script relative to program directory.</param>

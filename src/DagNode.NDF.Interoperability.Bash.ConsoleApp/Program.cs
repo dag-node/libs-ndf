@@ -34,9 +34,7 @@ class Program
 
 	private static async Task RunBashScriptGenericCallFunctionTests()
 	{
-		var cts = new CancellationTokenSource();
-		
-		using var bashScript = await BashScript.CreateAsync(
+		await using var bashScript = await BashScript.CreateAsync(
 			bashScriptSettings: new BashScriptSettings("functions.sh") { IsDebug = false },
 			bashProcessSettings: BashProcessSettings.CreateFactoryDefault,
 			functionWorkDirSettings: new FunctionWorkDirSettings {

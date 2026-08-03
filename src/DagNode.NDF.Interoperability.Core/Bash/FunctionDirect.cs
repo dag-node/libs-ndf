@@ -272,16 +272,18 @@ public class FunctionDirect
 	/// <param name="bashScriptPath">Absolute path to the bash script file</param>
 	/// <param name="functionName">Name of the bash function to execute.</param>
 	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
-	/// <param name="cts">Token source cancelling the wait; a new one is created when null.</param>
+	/// <param name="cancellationToken">Cancels the wait for the process to exit.</param>
 	/// <returns>True when the function exited with status 0.</returns>
 	/// <exception cref="InteroperabilityException">When the bash process cannot be started.</exception>
 	public static async Task<bool> GetBoolAsync(AbsolutePath bashScriptPath, string functionName,
-		string[]? functionArgs = null, CancellationTokenSource? cts = null)
+		string[]? functionArgs = null, CancellationToken cancellationToken = default)
 	{
 		AbsolutePath logFilePathAbsolute = AbsolutePath.Create(GetLogFilePath(bashScriptPath, functionName));
 		ProcessStartInfo processStartInfo = CreateBashProcessStartInfo(logFilePathAbsolute, bashScriptPath, functionName, functionArgs);
 		using Process process = Process.Start(processStartInfo) ?? throw new InteroperabilityException(
 			$"Error starting process for function {functionName}");
+		// WaitForExitAsync takes a CTS (it cancels it on error); bridge the caller's token to one.
+		using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 		await process.WaitForExitAsync(cts).ConfigureAwait(false);
 		return process.ExitCode == 0; // True if success, false otherwise
 	}
@@ -292,13 +294,13 @@ public class FunctionDirect
 	/// <param name="scriptFileName">Filename of the bash script, resolved against the current directory.</param>
 	/// <param name="functionName">Name of the bash function to execute.</param>
 	/// <param name="functionArgs">Array of args passed to the bash function, args may contain spaces as every arg is wrapped in double quotation marks</param>
-	/// <param name="cts">Token source cancelling the wait; a new one is created when null.</param>
+	/// <param name="cancellationToken">Cancels the wait for the process to exit.</param>
 	/// <returns>True when the function exited with status 0.</returns>
 	/// <exception cref="InteroperabilityException">When the bash process cannot be started.</exception>
 	public static async Task<bool> GetBoolAsync(string scriptFileName, string functionName,
-		string[]? functionArgs = null, CancellationTokenSource? cts = null)
+		string[]? functionArgs = null, CancellationToken cancellationToken = default)
 		=> await GetBoolAsync(AbsolutePath.Create(scriptFileName.GetFullPathFromCurrentDirectory()),
-			functionName, functionArgs, cts).ConfigureAwait(false);
+			functionName, functionArgs, cancellationToken).ConfigureAwait(false);
 
 	/// <summary>
 	/// Handling Arrays (newline-separated): If Bash returns an array of strings,

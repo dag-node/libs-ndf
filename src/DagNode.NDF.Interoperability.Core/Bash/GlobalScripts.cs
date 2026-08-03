@@ -2,6 +2,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using DagNode.NDF.Interoperability.Model;
+using DagNode.NDF.Interoperability.Model.Bash;
 
 namespace DagNode.NDF.Interoperability.Bash;
 
@@ -13,12 +14,17 @@ public static class GlobalScripts
 	// Prevent resource leaks from subprocesses when terminating main bash process
 	//private static readonly string INLINE_FUNCTION___global__on_stop=$$"""function {{FUNCTION_NAME___global__on_stop}}() { trap - SIGINT SIGTERM SIGHUP EXIT; echo \"___END_PROCESS__ \$\$ by \$1\"; kill -s SIGINT -- -\$(ps -o pgid= -p \$\$) 2>/dev/null && sleep 2; pgrep -g \$\$ >/dev/null 2>&1 && kill -s SIGKILL -- -\$(ps -o pgid= -p \$\$) 2>/dev/null; }""";
 	private const string FUNCTION_NAME___global__on_stop = "___global__on_stop";
+	// $$ is the group id directly because the resident bash is launched under setsid (its own session
+	// leader), so this needs neither `ps -o pgid=` nor `pgrep` — binaries a sandbox may forbid. It
+	// signals only bash's own group, never the .NET launcher's group. The SIGINT->SIGKILL grace on this
+	// session-teardown path is a fixed 2s; the per-call termination grace
+	// (BashScriptSettings.FunctionTerminationGracePeriod) is applied C#-side and is the one callers tune.
 	private static readonly string FUNCTION___global__on_stop
 		= $$"""
 		  function {{FUNCTION_NAME___global__on_stop}}() {
 		    trap - SIGINT SIGTERM SIGHUP EXIT
-		    kill -s SIGINT -- -"$(ps -o pgid= -p $$)" 2>/dev/null && sleep 2
-		    pgrep -g $$ >/dev/null 2>&1 && kill -s SIGKILL -- -"$(ps -o pgid= -p $$)" 2>/dev/null
+		    kill -s SIGINT -- -$$ 2>/dev/null && sleep 2
+		    kill -s SIGKILL -- -$$ 2>/dev/null
 		  }
 		  """;
 	public static readonly string SOURCE_FUNCTION___global__on_stop =
@@ -30,6 +36,11 @@ public static class GlobalScripts
 	
 	// private static string INLINE_FUNCTION___run_function__with__stdout_end_marker__async = $$"""{{{FUNCTION_NAME___run_function__with__stdout_end_marker__async}}() { function_marker=\$1; shift; { local duration_ns timespan start_time end_time exit_code; start_time=\$(date -u +%s%N); \"\$@\"; exit_code=\$?; end_time=\$(date -u +%s%N); duration_ns=\$((end_time - start_time)); timespan=\$(printf \"%02d:%02d:%02d.%06d\" \$((duration_ns / 3600000000000)) \$(((duration_ns / 60000000000) % 60)) \$(((duration_ns / 1000000000) % 60)) \$(((duration_ns / 1000) % 1000000))); echo \"{{FunctionParser.FUNCTION_END_MARKER}} \${start_time} \${end_time} \${timespan} \${function_marker} \${exit_code}\"; } &; }""";
 	public const string FUNCTION_NAME___run_function__with__stdout_end_marker__async = "___run_function__with__stdout_end_marker__async";
+	// The backgrounded subshell records its own PID ($BASHPID) to {pidDir}/{function_marker}.pid on the
+	// tmpfs, and removes it when the call finishes — so an absent file means "already done" and C# skips
+	// the kill. After backgrounding, the wrapper echoes ___BEGIN_FN__ {function_marker} {pid} on stdout so
+	// C# records the PID in-memory (its concurrent registry) without waiting on the file. Either source
+	// lets C# terminate just this call's process tree on timeout/cancellation.
 	private static string FUNCTION___run_function__with__stdout_end_marker__async
 		= $$"""
 		function {{FUNCTION_NAME___run_function__with__stdout_end_marker__async}}() {
@@ -37,15 +48,14 @@ public static class GlobalScripts
 		    local stream_redirection=$2 # FunctionQuery.GetStreamRedirectionWithReplacedPrefixAsQuotedArg
 		    local function_name=$3 # Name of bash function which will be called, the script file must be sourced
 		    shift 3 # Remove marker tag from arguments, also remove the second "StreamRedirection" parameter and function name
+		    local pid_file="{{FunctionWorkDirSettings.FunctionBasePidDir}}/${function_marker}.pid"
 		    {
+		        echo "$BASHPID" > "${pid_file}" # Record this call's own PID so C# can kill just this call's tree
 		        local duration_ns timespan start_time end_time exit_code
 		        start_time=$(date -u +%s%N)
 		        local function_args=""
 				for arg in "$@"; do function_args+="\"$arg\" "; done
 				local bash_cmd="${function_name} ${function_args} ${stream_redirection}"
-				# echo "FunctionWrapper: ${bash_cmd}" # >/dev/tty .NET process.StandardOutput is probably not tty
-		        # TODO: how to write to redirected file streams and simultaneously echo __END_FN__ to standard output without using eval?
-		        # eval "$@ ${stream_redirection}"
 		        eval "${bash_cmd}"
 		        exit_code=$?
 		        end_time=$(date -u +%s%N)
@@ -55,12 +65,10 @@ public static class GlobalScripts
 		            $(((duration_ns / 60000000000) % 60)) \
 		            $(((duration_ns / 1000000000) % 60)) \
 		            $(((duration_ns / 1000) % 1000000)))
-				# exec 3>&1 # save the original stdout (connected to .NET process.StandardOutput) to file descriptor 3
-				# Print function finished marker to the original standard output
 		        echo "___END_FN__ ${start_time} ${end_time} ${timespan} ${function_marker} ${exit_code}"
-		        # echo "___END_FN__ ..." >&3 #TODO: use kind of >&3 instead of eval "$@ ${stream_redirection}" the named pipe number may be different
-				# exec 3>&- # close file descriptor 3 (cleanup)
+		        rm -f "${pid_file}" # Call finished: drop the pid file so a later kill is a no-op
 		    } &
+		    echo "{{FunctionParser.FUNCTION_BEGIN_MARKER}} ${function_marker} $!" # Report the backgrounded PID to C#
 		}
 		""";
 	public static readonly string SOURCE_FUNCTION___run_function__with__stdout_end_marker__async =

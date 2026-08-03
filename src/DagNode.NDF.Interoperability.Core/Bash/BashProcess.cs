@@ -16,6 +16,7 @@ public class BashProcess: IDisposable
 	private event AsyncTypedEventHandler<Process, ReadErrorStreamEventArgs> EventHandlerReadErrorStreamAsync = null!;
 	public event AsyncTypedEventHandler<BashProcess, FunctionResultReadyEventArgs> EventHandlerFunctionResultReadyAsync = null!;
 	public event AsyncTypedEventHandler<BashProcess, ErrorStreamReceivedEventArgs> EventHandlerErrorStreamReceivedAsync = null!;
+	public event AsyncTypedEventHandler<BashProcess, FunctionPidReadyEventArgs> EventHandlerFunctionPidReadyAsync = null!;
 	
 	#region Interlocked properties
 	public bool IsRunning { get => _IsRunning; }
@@ -190,6 +191,13 @@ public class BashProcess: IDisposable
 					_logger.LogDebug("{SourcingResult}", sourcingResult.ToLogLine());
 					continue;
 				}
+				// Parse per-call begin markers carrying the backgrounded call's PID
+				if (FunctionParser.TryParseFunctionBegin(line, out string beginMarkerTag, out int beginPid)) {
+					if (EventHandlerFunctionPidReadyAsync != null) {
+						await EventHandlerFunctionPidReadyAsync.Invoke(this, new FunctionPidReadyEventArgs(beginMarkerTag, beginPid)).ConfigureAwait(false);
+					}
+					continue;
+				}
 				// Parse call function results
 				if (!FunctionParser.TryParseFunctionResultMetadata(line, out FunctionResultMetadata? metadata) || metadata is null) {
 					// Log anything else
@@ -217,16 +225,32 @@ public class BashProcess: IDisposable
 
 	public void Dispose()
 	{
-		// Gracefully exit the bash process by sending "exit"
-		if (!_process.HasExited) {
-			_process.StandardInput.WriteLine("exit");
-			_process.StandardInput.Flush();
+		// Dispose may run on a process that never started, when CreateAsync cleans up a failed startup:
+		// the redirected streams and HasExited are valid only after Start, so gate on _IsRunning and let
+		// the unstarted case fall through to disposing the Process object. The try guards the narrow race
+		// where the process exits between the HasExited check and the write.
+		if (_IsRunning) {
+			try {
+				// Ask bash to exit; its EXIT trap runs ___global__on_stop, reaping its own process group.
+				if (!_process.HasExited) {
+					_process.StandardInput.WriteLine("exit");
+					_process.StandardInput.Flush();
+				}
+			} catch (InvalidOperationException) { }
+			// Belt: if bash has not wound down within the grace, force-kill the whole tree. Process.Id is
+			// the setsid wrapper, so ProcessTree walks setsid -> bash -> descendants (Process.Kill(bool)
+			// is not available on netstandard2.1, and would orphan bash anyway).
+			try {
+				if (!_process.WaitForExit((int)BashProcessSettings.DisposeExitGracePeriod.TotalMilliseconds)) {
+					ProcessTree.KillTree(_process.Id);
+				}
+			} catch (InvalidOperationException) { }
+			_process.StandardInput.Dispose();
+			_process.StandardOutput.Dispose();
+			_process.StandardError.Dispose();
 		}
-		_process.StandardInput.Dispose();
 		EventHandlerReadOutputStreamAsync -= ReadOutputStreamAsync;
 		EventHandlerReadErrorStreamAsync -= ReadErrorStreamAsync;
-		_process.StandardOutput.Dispose();
-		_process.StandardError.Dispose();
 		_process.Dispose();
 	}
 }

@@ -32,6 +32,7 @@ rather than documenting around it.
 | Rule | Domain |
 | --- | --- |
 | [authoring](.claude/rules/authoring.rule.md) | Conventions for the rule files in this directory. |
+| [process-lifecycle](.claude/rules/process-lifecycle.rule.md) | Session lifetime, cancellation/timeout, disposal, and per-call process-tree termination. |
 | [shared-tree](.claude/rules/shared-tree.rule.md) | An operator and a confined agent building one .NET tree. |
 | [tests](.claude/rules/tests.rule.md) | Test project layout, categories, and the hermeticity contract. |
 
@@ -84,7 +85,9 @@ named. New sourcing paths use the base64 transport.
 `FunctionParser` reads `___END_FN__` by fixed field offsets (marker, start ns, end ns,
 duration, marker tag, exit code) and `___END_SOURCE_FN__ <object> <result>` by taking the
 last whitespace-separated token as the result, so a sourced path containing spaces still
-parses. Changing what any component emits obligates changing the offsets in the same change.
+parses. `___BEGIN_FN__ <marker tag> <pid>`, which reports a call's process id, is token-parsed
+like `___END_SOURCE_FN__` (marker tag carries no spaces). Changing what any component emits
+obligates changing the offsets in the same change. See [process-lifecycle](.claude/rules/process-lifecycle.rule.md).
 
 ### Untrusted input fails closed
 
